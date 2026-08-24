@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* Brand — NextStep² blue + navy identity */
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe7ff;
+  --color-brand-200: #bcd3ff;
+  --color-brand-300: #8db6ff;
+  --color-brand-400: #588fff;
+  --color-brand-500: #1667ef;
+  --color-brand-600: #0f52d6;
+  --color-brand-700: #0d40ac;
+  --color-brand-800: #103689;
+  --color-brand-900: #082454;
+  --color-brand-950: #061a3d;
+
+  --color-navy-500: #082454;
+  --color-navy-600: #061c40;
+  --color-navy-700: #04142e;
+
+  --color-success: #17a06b;
+  --color-warning: #d99a1b;
+  --color-error: #dc3b3b;
+  --color-locked: #94a3b8;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-color: #f4f7fc;
+  color: var(--color-navy-500);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
