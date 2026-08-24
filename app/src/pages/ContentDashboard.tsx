@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import ContentHeader from "../components/ContentHeader";
+import ContentManagerLayout from "../components/ContentManagerLayout";
 import Button from "../components/Button";
 import { loadContentManagerAccount, type ContentManagerAccount } from "../data/contentManager";
 import { loadContentPackages, type ContentPackageRecord } from "../data/contentPackages";
@@ -86,10 +86,8 @@ export default function ContentDashboard() {
   const publishedCount = packages.filter((p) => p.status === "published").length;
 
   return (
-    <div className="min-h-screen bg-[#f4f7fc]">
-      <ContentHeader managerName={account.name} />
-
-      <main className="mx-auto max-w-[1000px] px-6 py-12 sm:px-10">
+    <ContentManagerLayout managerName={account.name}>
+      <div>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-navy-500">Content Packages</h1>
@@ -140,7 +138,7 @@ export default function ContentDashboard() {
             </div>
           )}
         </div>
-      </main>
-    </div>
+      </div>
+    </ContentManagerLayout>
   );
 }

@@ -12,6 +12,14 @@ export async function loginAsContentManager(page: Page, email = "manager@example
   await expect(page).toHaveURL(/\/content\/dashboard/);
 }
 
+export async function loginAsAdmin(page: Page, email = "admin@example.com") {
+  await page.goto("/admin/login");
+  await page.fill('input[type="email"]', email);
+  await page.fill('input[type="password"]', "password");
+  await page.click('button[type="submit"]');
+  await expect(page).toHaveURL(/\/admin\/dashboard/);
+}
+
 /** Uploads a package via the real Import flow and waits for the validation result screen. */
 export async function importPackage(page: Page, fileName: string, zip: Buffer) {
   await page.goto("/content/import");
@@ -74,5 +82,42 @@ export async function importAndPublish(page: Page, fileName: string, zip: Buffer
   await page.getByRole("button", { name: "Publish" }).click();
   await expect(page.locator("text=Published").first()).toBeVisible();
 
+  return id;
+}
+
+/**
+ * Drives a package to a specific status via the real Content Manager UI —
+ * used to build a mix of draft/changes_requested/approved/published packages
+ * for Admin's read-only content overview tests.
+ */
+export async function importAndSetStatus(
+  page: Page,
+  fileName: string,
+  zip: Buffer,
+  target: "draft" | "changes_requested" | "approved" | "published",
+  notes = "Needs updates before this can ship."
+): Promise<string> {
+  await importPackage(page, fileName, zip);
+  const id = await getPackageIdByFileName(page, fileName);
+  if (target === "draft") return id;
+
+  await page.goto(`/content/package/${id}`);
+
+  if (target === "changes_requested") {
+    await page.fill("textarea", notes);
+    await page.getByRole("button", { name: "Request Changes" }).click();
+    await expect(page.locator("text=Changes Requested").first()).toBeVisible();
+    return id;
+  }
+
+  await checkAllReviewBoxes(page);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Approve Content" }).click();
+  await expect(page.getByText("Content approved")).toBeVisible();
+  if (target === "approved") return id;
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Publish" }).click();
+  await expect(page.locator("text=Published").first()).toBeVisible();
   return id;
 }

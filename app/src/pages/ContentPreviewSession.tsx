@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import ContentHeader from "../components/ContentHeader";
+import ContentManagerLayout from "../components/ContentManagerLayout";
 import BackLink from "../components/BackLink";
 import Button from "../components/Button";
 import SessionWorkspace, { type SubmissionSummary } from "../components/SessionWorkspace";
@@ -59,9 +59,8 @@ export default function ContentPreviewSession() {
 
   if (!location || !location.session.content) {
     return (
-      <div className="min-h-screen bg-[#f4f7fc]">
-        <ContentHeader managerName={account.name} />
-        <main className="mx-auto max-w-2xl px-6 py-16 text-center">
+      <ContentManagerLayout managerName={account.name}>
+        <div className="mx-auto max-w-2xl py-8 text-center">
           <p className="font-medium text-navy-500">This session can&apos;t be previewed.</p>
           <p className="mt-1.5 text-sm text-navy-500/60">
             The package may be invalid, or this course/subject/session no longer exists in it.
@@ -69,8 +68,8 @@ export default function ContentPreviewSession() {
           <Button type="button" className="!w-auto mt-4" onClick={() => navigate("/content/dashboard")}>
             Back to Dashboard
           </Button>
-        </main>
-      </div>
+        </div>
+      </ContentManagerLayout>
     );
   }
 
@@ -99,14 +98,14 @@ export default function ContentPreviewSession() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f4f7fc]">
-      <ContentHeader managerName={account.name} />
-
-      <div className="sticky top-16 z-40 border-b border-error/20 bg-error/10 px-6 py-2.5 text-center sm:px-10">
+    <ContentManagerLayout managerName={account.name}>
+      {/* Full-bleed sticky banner: cancels the shell's own top/side padding so it sits flush under the topbar. */}
+      <div className="sticky top-16 z-20 -mx-4 -mt-8 border-b border-error/20 bg-error/10 px-4 py-2.5 text-center sm:-mx-8 sm:-mt-10 sm:px-8">
         <p className="text-sm font-semibold text-error">CONTENT PREVIEW &middot; DRAFT &mdash; NOT PUBLISHED</p>
       </div>
 
-      <main className="mx-auto max-w-[1200px] px-6 py-8 sm:px-10">
+      {/* No max-width here — matches the real Student Session route (SessionPage.tsx), which never constrains SessionWorkspace's width either. */}
+      <div className="mt-8 sm:mt-10">
         <BackLink to={`/content/package/${packageId}`} label="Back to Sessions" />
 
         <div className="mt-4">
@@ -134,7 +133,7 @@ export default function ContentPreviewSession() {
             exitLabel="Back to Sessions"
           />
         </div>
-      </main>
-    </div>
+      </div>
+    </ContentManagerLayout>
   );
 }

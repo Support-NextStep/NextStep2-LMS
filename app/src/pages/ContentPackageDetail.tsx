@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import ContentHeader from "../components/ContentHeader";
+import ContentManagerLayout from "../components/ContentManagerLayout";
 import BackLink from "../components/BackLink";
 import Button from "../components/Button";
 import { loadContentManagerAccount, type ContentManagerAccount } from "../data/contentManager";
@@ -40,15 +40,14 @@ export default function ContentPackageDetail() {
 
   if (!pkg) {
     return (
-      <div className="min-h-screen bg-[#f4f7fc]">
-        <ContentHeader managerName={account.name} />
-        <main className="mx-auto max-w-2xl px-6 py-16 text-center">
+      <ContentManagerLayout managerName={account.name}>
+        <div className="mx-auto max-w-2xl py-8 text-center">
           <p className="font-medium text-navy-500">Package not found.</p>
           <Button type="button" className="!w-auto mt-4" onClick={() => navigate("/content/dashboard")}>
             Back to Dashboard
           </Button>
-        </main>
-      </div>
+        </div>
+      </ContentManagerLayout>
     );
   }
 
@@ -113,10 +112,8 @@ export default function ContentPackageDetail() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f4f7fc]">
-      <ContentHeader managerName={account.name} />
-
-      <main className="mx-auto max-w-[1000px] px-6 py-10 sm:px-10">
+    <ContentManagerLayout managerName={account.name}>
+      <div>
         <BackLink to="/content/dashboard" label="Back to Dashboard" />
 
         <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
@@ -274,7 +271,7 @@ export default function ContentPackageDetail() {
             </div>
           </div>
         )}
-      </main>
-    </div>
+      </div>
+    </ContentManagerLayout>
   );
 }

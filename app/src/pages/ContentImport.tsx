@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import ContentHeader from "../components/ContentHeader";
+import ContentManagerLayout from "../components/ContentManagerLayout";
 import BackLink from "../components/BackLink";
 import Button from "../components/Button";
 import { loadContentManagerAccount, type ContentManagerAccount } from "../data/contentManager";
@@ -79,10 +79,8 @@ export default function ContentImport() {
   if (!checked || !account) return null;
 
   return (
-    <div className="min-h-screen bg-[#f4f7fc]">
-      <ContentHeader managerName={account.name} />
-
-      <main className="mx-auto max-w-[900px] px-6 py-10 sm:px-10">
+    <ContentManagerLayout managerName={account.name}>
+      <div>
         <BackLink to="/content/dashboard" label="Back to Dashboard" />
 
         <h1 className="mt-4 text-2xl font-semibold text-navy-500">Import Content Package</h1>
@@ -229,8 +227,8 @@ export default function ContentImport() {
             </div>
           )}
         </div>
-      </main>
-    </div>
+      </div>
+    </ContentManagerLayout>
   );
 }
 

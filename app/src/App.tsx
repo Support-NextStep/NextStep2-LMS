@@ -28,6 +28,12 @@ import ContentDashboard from "./pages/ContentDashboard";
 import ContentImport from "./pages/ContentImport";
 import ContentPackageDetail from "./pages/ContentPackageDetail";
 import ContentPreviewSession from "./pages/ContentPreviewSession";
+import AdminLogin from "./pages/AdminLogin";
+import AdminDashboard from "./pages/AdminDashboard";
+import AdminStudents from "./pages/AdminStudents";
+import AdminStudentDetail from "./pages/AdminStudentDetail";
+import AdminContent from "./pages/AdminContent";
+import AdminContentDetail from "./pages/AdminContentDetail";
 import { ProgressProvider } from "./data/progress";
 
 export default function App() {
@@ -76,6 +82,14 @@ export default function App() {
             path="/content/preview/:packageId/:courseId/:subjectId/:sessionId"
             element={<ContentPreviewSession />}
           />
+
+          {/* Admin — Slice 1: read-only platform overview over Students + Content. */}
+          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/admin/dashboard" element={<AdminDashboard />} />
+          <Route path="/admin/students" element={<AdminStudents />} />
+          <Route path="/admin/students/:studentId" element={<AdminStudentDetail />} />
+          <Route path="/admin/content" element={<AdminContent />} />
+          <Route path="/admin/content/:courseId" element={<AdminContentDetail />} />
 
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

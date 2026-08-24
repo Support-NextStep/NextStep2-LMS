@@ -62,6 +62,11 @@ export function getSubmissionsForSession(sessionId: string): ExerciseSubmission[
     .sort((a, b) => a.attemptNumber - b.attemptNumber);
 }
 
+/** Every submission across every session, most recent first — read-only aggregate for Admin's student overview. */
+export function getAllSubmissions(): ExerciseSubmission[] {
+  return loadAll().sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+}
+
 function generateId(): string {
   return `sub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
