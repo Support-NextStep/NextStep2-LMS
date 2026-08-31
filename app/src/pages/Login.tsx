@@ -3,13 +3,31 @@ import { Link, useNavigate } from "react-router-dom";
 import AuthLayout from "../components/AuthLayout";
 import FormField from "../components/FormField";
 import Button from "../components/Button";
+import { loginStudentAccount } from "../data/auth";
+import { ApiError } from "../data/apiClient";
 
+// ---------------------------------------------------------------------------
+// Real authentication against the backend (Phase 0) — see
+// NEXTSTEP2_BACKEND_ARCHITECTURE_AND_TECHNOLOGY_SELECTION.md Part 11.
+//
+// Deliberately NOT adding a route guard to the rest of the Student app here.
+// Every Student page (Dashboard, My Course, Session, Performance, Portfolio)
+// remains exactly as reachable as it is today — this Phase 0 change makes
+// the login itself real (a wrong password now genuinely fails, and a
+// successful login establishes a real httpOnly-cookie session) without
+// retrofitting access control onto pages that never had any, which would be
+// a materially larger behavior change than "connect authentication" asked
+// for. Student-generated data (progress/performance/portfolio/exercise
+// submissions) is still local-only in this phase — see the implementation
+// report — so nothing downstream of login reads the now-real session yet.
+// ---------------------------------------------------------------------------
 export default function Login() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [formError, setFormError] = useState<string | null>(null);
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const email = String(form.get("email") ?? "").trim();
@@ -21,14 +39,24 @@ export default function Login() {
     if (!password) nextErrors.password = "Password is required.";
 
     setErrors(nextErrors);
+    setFormError(null);
     if (Object.keys(nextErrors).length) return;
 
     setLoading(true);
-    // Mock auth — replace with real API call later.
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      await loginStudentAccount(email, password);
       navigate("/dashboard");
-    }, 700);
+    } catch (err) {
+      setFormError(
+        err instanceof ApiError && err.status === 401
+          ? "Invalid email or password."
+          : err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -75,6 +103,12 @@ export default function Login() {
             Forgot password?
           </Link>
         </div>
+
+        {formError && (
+          <p role="alert" className="text-sm font-medium text-error">
+            {formError}
+          </p>
+        )}
 
         <Button type="submit" loading={loading}>
           Log In

@@ -1,20 +1,20 @@
 // ---------------------------------------------------------------------------
-// Exercise submission storage.
+// Exercise submission storage — LEGACY, READ-ONLY.
 //
-// Deliberately isolated from progress.tsx (completedSessionIds), performance.ts
-// (SessionPerformanceRecord), and portfolio.ts — a submission is "what code
-// did the student turn in", not completion status or a score. No evaluator
-// exists yet, so nothing here computes correctness or a score; that's a
-// later slice (see the file header note in matching's sibling docs for the
-// intended future pipeline: Submission -> Automated Evaluation -> Score).
+// AI Exercise Evaluation Slice 1 replaced the real submission read/write
+// path with a real, backend-persisted one (see ../data/exerciseSubmissionsApi.ts,
+// used by SessionPage.tsx / SessionWorkspace.tsx). Nothing writes to this
+// file's localStorage key anymore — getAllSubmissions() below now only ever
+// returns whatever was written before that migration (or nothing, in a
+// fresh browser).
 //
-// Persisted via localStorage under its own key, following the same
-// load/save-function convention as portfolio.ts/company.ts/hiring.ts. When a
-// real backend exists, only this file's load/save functions need to change.
-//
-// studentId: this prototype has no multi-student auth system (see
-// candidates.ts for the same caveat elsewhere) — STUDENT.name from mock.ts
-// is used as a placeholder identity until real auth exists.
+// The one remaining caller is AdminStudentDetail.tsx, which is itself still
+// built entirely around mock.ts's single hardcoded STUDENT (see
+// adminStudents.ts's own header — there is no real multi-student roster in
+// this backend yet), so it has no real per-user id to query the new backend
+// submissions endpoint with. Migrating that page is out of Slice 1's scope;
+// this file stays only to keep it compiling until that page is migrated to
+// a real multi-student backend.
 // ---------------------------------------------------------------------------
 
 export type ExerciseFile = { name: string; content: string };
@@ -23,9 +23,6 @@ export type ExerciseSubmission = {
   id: string;
   studentId: string;
   sessionId: string;
-  /** One exercise per session today, so this mirrors sessionId — kept as its
-   *  own field so a session with multiple exercises can be supported later
-   *  without changing this shape. */
   exerciseId: string;
   language: string;
   files: ExerciseFile[];
@@ -47,57 +44,7 @@ function loadAll(): ExerciseSubmission[] {
   }
 }
 
-function saveAll(list: ExerciseSubmission[]) {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-  } catch {
-    // Ignore write failures (e.g. private browsing) — the submission just won't persist.
-  }
-}
-
-/** All submissions for one session's exercise, oldest attempt first. */
-export function getSubmissionsForSession(sessionId: string): ExerciseSubmission[] {
-  return loadAll()
-    .filter((s) => s.sessionId === sessionId)
-    .sort((a, b) => a.attemptNumber - b.attemptNumber);
-}
-
-/** Every submission across every session, most recent first — read-only aggregate for Admin's student overview. */
+/** Every submission across every session, most recent first — read-only aggregate for Admin's student overview. See file header: this is frozen, legacy data. */
 export function getAllSubmissions(): ExerciseSubmission[] {
   return loadAll().sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
-}
-
-function generateId(): string {
-  return `sub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/**
- * Records a new attempt. Never overwrites a previous submission — each call
- * appends a new record with the next attempt number for this session.
- */
-export function createSubmission(
-  studentId: string,
-  sessionId: string,
-  exerciseId: string,
-  language: string,
-  files: ExerciseFile[]
-): ExerciseSubmission {
-  const existing = getSubmissionsForSession(sessionId);
-  const attemptNumber = existing.length + 1;
-
-  const submission: ExerciseSubmission = {
-    id: generateId(),
-    studentId,
-    sessionId,
-    exerciseId,
-    language,
-    files,
-    submittedAt: new Date().toISOString(),
-    attemptNumber,
-  };
-
-  const all = loadAll();
-  all.push(submission);
-  saveAll(all);
-  return submission;
 }

@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Sidebar navigation icons shared across role layouts (StudentLayout,
-// ContentManagerLayout, AdminLayout). Extracted from the Student sidebar
+// ContentAuthorLayout, ContentReviewerLayout, AdminLayout). Extracted from the Student sidebar
 // (the original UX reference) so Dashboard/Content — which multiple roles
 // need — aren't redefined per role. Student's four icons are copied here
 // byte-for-byte from the original StudentLayout.tsx; nothing about their
@@ -74,5 +74,52 @@ export const IconStudents: NavIcon = ({ className }) => (
       strokeLinejoin="round"
       d="M3.25 19.25c.5-3.2 2.7-5.25 5.25-5.25s4.75 2.05 5.25 5.25M14 15.25c2.1.15 3.85 1.85 4.25 4"
     />
+  </svg>
+);
+
+/** Content Author's "My Submissions" — an inbox tray. */
+export const IconSubmissions: NavIcon = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} className={className}>
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M3.75 13.5h4.5l1.5 2.25h4.5l1.5-2.25h4.5M3.75 13.5l1.72-6.19A1.5 1.5 0 016.9 6.25h10.2a1.5 1.5 0 011.43 1.06l1.72 6.19M3.75 13.5v5.25A1.5 1.5 0 005.25 20.25h13.5a1.5 1.5 0 001.5-1.5V13.5"
+    />
+  </svg>
+);
+
+/** Content Reviewer's "Pending Review" — a clock. */
+export const IconPending: NavIcon = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} className={className}>
+    <circle cx="12" cy="12" r="8.25" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5V12l3 1.75" />
+  </svg>
+);
+
+/** Content Reviewer's "Changes Requested" — a pencil with an alert dot. */
+export const IconChangesRequested: NavIcon = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} className={className}>
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M16.5 4.5a2.121 2.121 0 013 3L8.25 18.75l-4 1 1-4L16.5 4.5z"
+    />
+    <circle cx="18.5" cy="6.5" r="0.75" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+/** Content Reviewer's "Approved" — a badge/check circle. */
+export const IconApproved: NavIcon = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} className={className}>
+    <circle cx="12" cy="12" r="8.25" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M8.5 12.25l2.25 2.25 4.75-5" />
+  </svg>
+);
+
+/** Content Reviewer's "Published" — a broadcast/globe glyph. */
+export const IconPublished: NavIcon = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} className={className}>
+    <circle cx="12" cy="12" r="8.25" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5M12 3.75c2.1 2.3 3.25 5.2 3.25 8.25S14.1 17.95 12 20.25M12 3.75c-2.1 2.3-3.25 5.2-3.25 8.25s1.15 5.95 3.25 8.25" />
   </svg>
 );

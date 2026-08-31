@@ -6,15 +6,15 @@ import Logo from "./Logo";
 // Shared authenticated application shell — Topbar + Sidebar + Main content.
 //
 // This is the Student layout's architecture (StudentLayout.tsx was the UX
-// reference), generalized so Content Manager and Admin render inside the
-// exact same chrome instead of their own standalone top-header pages.
+// reference), generalized so every internal-role workspace renders inside the
+// exact same chrome instead of its own standalone top-header page.
 // Role-specific navigation is passed in; the shell itself has no idea which
 // role is using it beyond the label/nav items/logout handler it's given.
 //
-// StudentLayout.tsx, ContentManagerLayout.tsx, and AdminLayout.tsx are thin
-// per-role wrappers around this component — each supplies its own nav items,
-// account name, optional role badge, and logout behavior, matching how
-// StudentLayout already worked before this refactor.
+// StudentLayout.tsx, ContentAuthorLayout.tsx, ContentReviewerLayout.tsx, and
+// AdminLayout.tsx are thin per-role wrappers around this component — each
+// supplies its own nav items, account name, optional role badge, and logout
+// behavior, matching how StudentLayout already worked before this refactor.
 // ---------------------------------------------------------------------------
 
 export type AppShellNavItem = {
@@ -28,10 +28,10 @@ export type AppShellNavItem = {
 export type AppShellProps = {
   navItems: AppShellNavItem[];
   userName: string;
-  /** Small pill shown next to the logo — e.g. "Content Manager" / "Admin". Omitted for Student — no badge, same as before this refactor. */
+  /** Small pill shown next to the logo — e.g. "Content Author" / "Content Reviewer" / "Admin". Omitted for Student — no badge, same as before this refactor. */
   roleLabel?: string;
   onLogout: () => void;
-  /** Student-only: the notification bell was never part of Content Manager/Admin's header, and isn't being added for them now — omit (default) to leave it out. */
+  /** Student-only: the notification bell was never part of the internal-role headers, and isn't being added for them now — omit (default) to leave it out. */
   showNotifications?: boolean;
   children: ReactNode;
 };

@@ -16,25 +16,39 @@
 // only owns *how the session is taught*.
 // ---------------------------------------------------------------------------
 
-import { getPublishedSessionContent } from "./publishedContent";
+import { getCachedBackendPublishedContent } from "./backendPublishedContent";
 
 export type ActivityKey = "learning" | "videoCheck" | "practice" | "exercise";
 
+/**
+ * One authored video checkpoint — see NEXTSTEP2_VIDEO_CHECKPOINT_SYSTEM.md
+ * §A. `SessionContent.checkpoints` is always a resolved array of these
+ * (never the deprecated singular shape a pre-Slice-1 record might still
+ * have on disk — see ContentSessionContent.videoCheckpoint in
+ * contentPackages.ts and the compatibility adapter next to
+ * toPreviewSessionContent() there, which is the one place that shape ever
+ * gets converted into this one).
+ *
+ * `continueImmediately` from the old per-checkpoint authoring data is
+ * intentionally not part of this shape — see §D of the design doc: it had
+ * no effect even before this slice, so it was removed rather than kept as
+ * a config field that does nothing.
+ */
 export type VideoCheckpoint = {
+  id: string;
+  /** Whole seconds from the start of the video. */
+  timestampSeconds: number;
   question: string;
   options: string[];
   correctIndex: number;
-};
-
-export type PracticeCheck = {
-  label: string;
-  passed: boolean;
+  /** Shown to the student after they answer, right or wrong. */
+  feedback: string;
+  /** See §C — must be *answered* (not necessarily correctly) before it's resolved; gates session completion. Blocking playback/seeking on this is a future playback-slice concern, not implemented yet. */
+  required: boolean;
 };
 
 export type AiHelpConfig = {
-  quickPrompts: string[];
-  replies: Record<string, string>;
-  defaultReply: string;
+  suggestedPrompts: string[];
 };
 
 export type SessionFormat = "recorded" | "live";
@@ -49,15 +63,25 @@ export type SessionDelivery = {
 
 export type SessionContent = {
   objective: string;
+  explanation: string;
   concepts: string[];
   keyConcepts: string[];
   examples: string[];
-  videoCheckpoint: VideoCheckpoint;
+  /**
+   * Present whenever the session has a real configured video — previously
+   * dropped before reaching this type (see the Video + Video Checkpoints
+   * audit); now a first-class field so a future playback slice can render
+   * the real YouTube video for students, not only in Preview.
+   */
+  video?: { youtubeUrl: string; title: string };
+  /**
+   * Always a resolved array (possibly empty) — never the deprecated
+   * singular shape. See the VideoCheckpoint doc comment above.
+   */
+  checkpoints: VideoCheckpoint[];
   practice: {
     task: string;
     starterCode: string;
-    /** Mock check results — a future version can swap this for a real per-language checker. */
-    checklist: PracticeCheck[];
     /**
      * Which language this practice is written in — drives which OneCompiler
      * embed is loaded (see practiceExecution.ts). Kept as a plain string
@@ -66,8 +90,14 @@ export type SessionContent = {
      * provider itself.
      */
     language: string;
+    // No `checklist`/Self-Check field — retired from the active product
+    // contract (see NEXTSTEP2_FRONTEND_BACKEND_DATA_CONTRACT_AUDIT.md's
+    // cleanup pass). It was authored, extracted, persisted, and converted
+    // through the whole pipeline but never shown to students and never
+    // meaningfully scored. Practice completion is "the student opened
+    // Practice" — see SessionWorkspace.tsx — and contributes no score.
   };
-  aiHelp: AiHelpConfig;
+  aiHelp?: AiHelpConfig;
   exercise: {
     objective: string;
     requirements: string[];
@@ -75,6 +105,20 @@ export type SessionContent = {
     starterCode?: string;
     /** Drives which OneCompiler embed loads, same convention as practice.language. */
     language: string;
+    /**
+     * The remainder of the authored Exercise contract — previously dropped
+     * silently by buildContentSessionContent()/toPreviewSessionContent()
+     * before reaching this type (see the data contract audit's §15
+     * finding). Not rendered anywhere yet — preserved so a future
+     * evaluation/grading pipeline has something real to consume. All
+     * optional since curated/generated fallback content never authors them.
+     */
+    scenario?: string;
+    expectedBehaviour?: string;
+    /** Written as statements checkable true/false — drives future AI-assisted evaluation. */
+    evaluationCriteria?: string[];
+    edgeCases?: string[];
+    submissionInstructions?: string;
   };
   /** Which activities must be done before the session can be marked complete. */
   requiredActivities: ActivityKey[];
@@ -100,6 +144,7 @@ const SESSION_CONTENT: Record<string, SessionContent> = {
   // Workspace concept. Not tied to the real curriculum.
   "components-and-state": {
     objective: "By the end of this lesson you'll be able to build a working HTML form.",
+    explanation: "",
     concepts: ["form", "input", "label", "type", "validation"],
     keyConcepts: [
       "The <form> element wraps all input fields.",
@@ -111,24 +156,24 @@ const SESSION_CONTENT: Record<string, SessionContent> = {
       "Example: <input type=\"email\" name=\"email\" required />",
       "Example: <button type=\"submit\">Submit</button>",
     ],
-    videoCheckpoint: {
-      question: "Which HTML element is used to collect user input?",
-      options: ["<form>", "<div>", "<section>", "<span>"],
-      correctIndex: 0,
-    },
+    checkpoints: [
+      {
+        id: "components-and-state-checkpoint-1",
+        timestampSeconds: 0,
+        question: "Which HTML element is used to collect user input?",
+        options: ["<form>", "<div>", "<section>", "<span>"],
+        correctIndex: 0,
+        feedback: "Right — <form> is the container every input, label, and submit button belongs inside.",
+        required: true,
+      },
+    ],
     practice: {
       task: "Create a simple HTML registration form containing: Name, Email, Password, and a Submit button.",
       starterCode: "<form>\n  \n</form>",
-      checklist: [
-        { label: "Form exists", passed: true },
-        { label: "Name input exists", passed: true },
-        { label: "Email input exists", passed: true },
-        { label: "Password validation missing", passed: false },
-      ],
       language: "html",
     },
     aiHelp: {
-      quickPrompts: [
+      suggestedPrompts: [
         "Explain this topic",
         "Explain more simply",
         "Give me an example",
@@ -137,24 +182,6 @@ const SESSION_CONTENT: Record<string, SessionContent> = {
         "How would I ask AI to build this?",
         "Help me improve my prompt",
       ],
-      replies: {
-        "Explain this topic":
-          "HTML forms collect input from users with elements like <input>, <label>, and <button>. Every field should have a label so people know what to enter.",
-        "Explain more simply":
-          "Think of a form like a paper form — each blank line is an input, and the label tells you what to write there.",
-        "Give me an example":
-          'For example: <label>Email</label><input type="email" name="email" /> connects the text "Email" to the input field.',
-        "Give me a hint":
-          "Check that every <input> has a matching <label> and the right type attribute — that's usually what's missing.",
-        "Help me understand my mistake":
-          "Your check flagged password validation — try adding type=\"password\" and a required attribute to that input.",
-        "How would I ask AI to build this?":
-          "Be specific: \"Write an HTML form with Name, Email, and Password fields, each with a label, and a Submit button.\" Clear requirements get better AI output.",
-        "Help me improve my prompt":
-          "Add constraints — mention accessibility (labels), input types, and validation, so the AI's answer actually matches what you need.",
-      },
-      defaultReply:
-        "That's a great question! (This is a UI preview — AI responses aren't connected yet.)",
     },
     exercise: {
       objective: "Build a registration form independently.",
@@ -205,25 +232,28 @@ function buildDefaultSessionContent(sessionTitle: string, sessionDescription: st
   // Generic fallback for sessions without curated content yet.
   return {
     objective: sessionDescription,
+    explanation: "",
     concepts: [],
     keyConcepts: [sessionDescription],
     examples: [],
-    videoCheckpoint: {
-      question: `What is the main focus of ${sessionTitle}?`,
-      options: ["Applying the concept", "Something unrelated", "A different topic", "None of the above"],
-      correctIndex: 0,
-    },
+    checkpoints: [
+      {
+        id: "default-checkpoint",
+        timestampSeconds: 0,
+        question: `What is the main focus of ${sessionTitle}?`,
+        options: ["Applying the concept", "Something unrelated", "A different topic", "None of the above"],
+        correctIndex: 0,
+        feedback: "That's the focus of this session.",
+        required: true,
+      },
+    ],
     practice: {
       task: sessionDescription,
       starterCode: "// Write your solution here",
-      checklist: [{ label: "Task attempted", passed: true }],
       language: "javascript",
     },
     aiHelp: {
-      quickPrompts: ["Explain this topic", "Explain more simply", "Give me an example", "Give me a hint"],
-      replies: {},
-      defaultReply:
-        "That's a great question! (This is a UI preview — AI responses aren't connected yet.)",
+      suggestedPrompts: ["Explain this topic", "Explain more simply", "Give me an example", "Give me a hint"],
     },
     exercise: {
       objective: `Apply what you learned in ${sessionTitle} independently.`,
@@ -234,14 +264,17 @@ function buildDefaultSessionContent(sessionTitle: string, sessionDescription: st
   };
 }
 
-export function getSessionContent(
-  sessionId: string,
-  fallback: { title: string; description: string },
-  courseId?: string,
-  subjectId?: string
-): SessionContent {
-  const publishedOverride = courseId && subjectId ? getPublishedSessionContent(courseId, subjectId, sessionId) : null;
-  const base = publishedOverride ?? SESSION_CONTENT[sessionId] ?? buildDefaultSessionContent(fallback.title, fallback.description);
+export function getSessionContent(sessionId: string, fallback: { title: string; description: string }): SessionContent {
+  // Precedence: the real backend's canonical published-content resolution
+  // (see backendPublishedContent.ts's header) first — this is now the only
+  // published-content source; the Content Author/Reviewer workflow writes
+  // through the same backend (authoredSessionApi.ts/contentReviewApi.ts),
+  // so there is no longer a separate local-published-content layer to fall
+  // back to here. Then the curated demo entry; then the generated fallback.
+  // undefined (not fetched yet) and null (backend confirmed nothing
+  // published) both fall through here exactly the same way.
+  const backendOverride = getCachedBackendPublishedContent(sessionId);
+  const base = backendOverride ?? SESSION_CONTENT[sessionId] ?? buildDefaultSessionContent(fallback.title, fallback.description);
   const delivery = getSessionDelivery(sessionId);
   if (!delivery) return base;
 

@@ -3,14 +3,16 @@ import { useNavigate } from "react-router-dom";
 import AuthLayout from "../components/AuthLayout";
 import FormField from "../components/FormField";
 import Button from "../components/Button";
-import { deriveAdminName, saveAdminAccount } from "../data/adminAccount";
+import { loginAdminAccount } from "../data/adminAccount";
+import { ApiError } from "../data/apiClient";
 
 export default function AdminLogin() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [formError, setFormError] = useState<string | null>(null);
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const email = String(form.get("email") ?? "").trim();
@@ -22,16 +24,28 @@ export default function AdminLogin() {
     if (!password) nextErrors.password = "Password is required.";
 
     setErrors(nextErrors);
+    setFormError(null);
     if (Object.keys(nextErrors).length) return;
 
     setLoading(true);
-    // Mock internal-role auth — no real backend/credential store exists yet.
-    // First login on a fresh browser creates the local Admin session.
-    setTimeout(() => {
-      saveAdminAccount({ name: deriveAdminName(email), email });
-      setLoading(false);
+    // Real authentication against the backend (Phase 0) — see
+    // ../data/adminAccount.ts. This can now genuinely fail (wrong password,
+    // not an Admin account, or the backend being unreachable), unlike the
+    // old mock which always "succeeded."
+    try {
+      await loginAdminAccount(email, password);
       navigate("/admin/dashboard");
-    }, 500);
+    } catch (err) {
+      setFormError(
+        err instanceof ApiError && err.status === 401
+          ? "Invalid email or password."
+          : err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -70,6 +84,12 @@ export default function AdminLogin() {
           placeholder="Enter your password"
           error={errors.password}
         />
+
+        {formError && (
+          <p role="alert" className="text-sm font-medium text-error">
+            {formError}
+          </p>
+        )}
 
         <Button type="submit" loading={loading}>
           Log In

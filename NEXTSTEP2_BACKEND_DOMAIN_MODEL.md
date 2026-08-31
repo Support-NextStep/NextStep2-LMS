@@ -1,6 +1,6 @@
-# NextStep² Backend Domain Model (Proposed — Final)
+# NextStep² Backend Domain Model (Approved — Frozen)
 
-**Status:** Design document only. Nothing in this document has been implemented. No backend, database, table, or framework was created.
+**Status:** Design document only, now **approved and frozen** (see the Frozen Decisions Summary near the end). Nothing in this document has been implemented. No backend, database, table, or framework was created. The next step is Backend Architecture & Technology Selection, not covered here.
 
 **Builds on:** `NEXTSTEP2_BACKEND_READINESS_AUDIT.md`, which inventoried what exists today. That document mostly *asked* questions and flagged gaps without resolving them. This document exists to **answer** them — every open question in the audit gets an explicit decision here, with reasoning grounded in the actual MVP behavior, not invented functionality.
 
@@ -57,6 +57,8 @@ This is the most consequential decision in this document, because the audit foun
 
 **Decision: `Course`, `Subject`, and `Session` are standalone, platform-owned entities with stable ids — never embedded inside a `ContentPackage`, and never hardcoded in application code.**
 
+**Ownership vs. operation, stated precisely:** curriculum structure (`Course`/`Subject`/`Session`) is **platform-owned** — it does not belong to Content Manager as a domain the way `ContentPackage`/`ContentReview`/`Publication` do. Content Manager is, for this MVP, simply **the only operational actor that creates/updates it**, and only as a side effect of publishing (below). That distinction is deliberate, not pedantic: it's what leaves room for a future Admin curriculum-management capability (creating/editing a Course or Subject directly, independent of any package) without requiring Course/Subject/Session to be re-homed out of Content Manager's domain later. **No such Admin capability is being proposed or needed now** — this is purely about not baking today's one-actor reality into the ownership model itself.
+
 ```
 Course   { id, title, description }
   └── Subject { id, courseId, title, description, order }
@@ -67,7 +69,7 @@ The subtlety is **when** a Course/Subject/Session row's `title`/`description`/`o
 
 **Rule: a canonical `Course`/`Subject`/`Session` row's display fields always reflect "as of the last publish." Draft/Review changes never touch these tables until Publish.**
 
-- **Who creates these records:** the Content Manager import/publish pipeline is the only path that creates or updates them — there is no separate curriculum-authoring UI in this MVP, matching current reality (Content Manager only ever imports pre-authored packages, per the audit's §12/§26 findings).
+- **Who creates these records:** operationally, the Content Manager import/publish pipeline is the only path that creates or updates them today — there is no separate curriculum-authoring UI in this MVP, matching current reality (Content Manager only ever imports pre-authored packages, per the audit's §12/§26 findings). The records themselves remain platform-owned, per the distinction above.
 - **How Content Manager imports content against them:** while a package is Draft / Changes Requested / Approved, its authored course/subject/session/content tree lives entirely **inside the package's own scope** (exactly like today's `ContentPackageRecord.courses`, just normalized — see §6). It does not touch the canonical tables at all during review.
 - **What happens at Publish:** for each session the package authors, the pipeline looks up the canonical `Session` by the author-supplied id:
   - **If it doesn't exist yet** (this is the first time this session has ever been published), create the canonical `Course`/`Subject`/`Session` rows (creating parents as needed) using this version's title/description/order.
@@ -125,6 +127,8 @@ ContentVersion
 ```
 
 **`delivery` is folded into `ContentVersion`, correcting a real prototype gap.** Today, live/recorded delivery info lives in a completely separate hardcoded map (`SESSION_DELIVERY`) outside the Content Package pipeline entirely — the audit flagged this explicitly. There's no reason for it to stay disconnected from the rest of the authored content; it belongs with the version it describes.
+
+**Deliberately not normalized further.** `concepts[]`, `keyConcepts[]`, `examples[]`, `video`, `videoCheckpoint`, `practice`, `aiHelp`, `delivery` stay structured JSON-shaped fields *inside* `ContentVersion` — they do not become their own tables (`Concept`, `Example`, `KeyConcept`, `Video`, `VideoOption`, `AIQuickPrompt`, `AIReply`, ...). Nothing in the MVP ever queries, filters, joins, or reports across these sub-structures independently of the `ContentVersion` they belong to — a student always reads all of them together, as one session's content, and a Content Manager always authors all of them together, as one JSON `content.json`. Splitting them into a dozen-plus tables would add real schema and query complexity purely for its own sake. The only field promoted to its own table is `Exercise` (§12), and only for the specific, concrete reason given there (its id is currently borrowed from `sessionId`, which is unsafe) — not as a general normalization policy. This is the same reasoning already applied to `Skills` in §13 and is stated once here so it's clearly a consistent, deliberate stance across the whole model, not an inconsistency.
 
 **"The session's current content" is not a stored fact — it's the result of one query:** join `Session → Publication (where supersededAt IS NULL) → ContentVersion`. This is a direct, single lookup, not a derived computation over history (see §7/§9).
 
@@ -376,11 +380,13 @@ Admin's authorization boundary is simple to state and enforce: **read-only, ever
 
 ## 17. File Storage
 
-**Recommendation: retain the original uploaded ZIP, in addition to (not instead of) the parsed content.**
+**Normalized content → MUST HAVE. Original ZIP retention → SHOULD HAVE, not a blocker.**
 
-Today, the prototype parses the ZIP entirely in-browser and **discards the original binary immediately** — only the parsed JSON tree survives. That is a real, not merely theoretical, risk for a production system: the source-of-truth artifact a Content Team uploaded is gone forever the moment it's been read once, with no way to re-process it if the parser changes, no way to hand it back for troubleshooting, and no way to prove exactly what was uploaded.
+The parsed, normalized data (`ContentVersion`, `Exercise`, etc. — §5/§6) is the load-bearing part of this MVP; the backend cannot function without it and it is not optional. Retaining the original uploaded ZIP is a separate, smaller, genuinely optional-for-launch decision, and this document should not let it gate the core backend.
 
-**Recommendation, without choosing a storage vendor:** store the original ZIP as an opaque, content-addressed blob referenced from `ContentPackage` (e.g., a stored reference/pointer field — the exact storage mechanism is a technology decision, explicitly deferred). The **parsed, normalized data** (`ContentVersion`, `Exercise`, etc.) remains the actual live/queryable data source — the ZIP is provenance, not the runtime data path. This is a small addition (one reference field + wherever the bytes end up) with clear, concrete upside and no functional downside.
+Today, the prototype parses the ZIP entirely in-browser and **discards the original binary immediately** — only the parsed JSON tree survives. That's a real (not merely theoretical) traceability gap for a production system: the source-of-truth artifact a Content Team uploaded is gone forever the moment it's been read once, with no way to re-process it if the parser changes, no way to hand it back for troubleshooting, and no way to prove exactly what was uploaded. It's worth fixing — just not worth blocking on.
+
+**Recommendation, without choosing a storage vendor:** store the original ZIP as an opaque, content-addressed blob referenced from `ContentPackage` (a stored reference/pointer field — the exact storage mechanism is a technology decision, explicitly deferred). **If whatever backend/storage is ultimately chosen makes this cheap and simple, do it from day one.** If it adds meaningful setup cost relative to the rest of the MVP, it can follow immediately after the core backend ships, without redesigning anything — it's an additive field, not a structural dependency of any other entity in this model.
 
 ---
 
@@ -392,9 +398,9 @@ Today, the prototype parses the ZIP entirely in-browser and **discards the origi
 |---|---|---|:---:|---|
 | `User` | Platform | Identity + auth for all three roles | ✅ | root of everything below |
 | `Enrollment` | Student | Links a student to a course | ✅ | `User` → `Course` |
-| `Course` | Platform (published via Content Manager) | Top of the curriculum hierarchy | ✅ | → `Subject` |
-| `Subject` | Platform (published via Content Manager) | Groups sessions | ✅ | `Course` → `Session` |
-| `Session` | Platform (published via Content Manager) | One learning unit | ✅ | `Subject` → `Publication`/`ContentVersion` |
+| `Course` | Platform-owned (Content Manager is the operational actor, via publishing) | Top of the curriculum hierarchy | ✅ | → `Subject` |
+| `Subject` | Platform-owned (Content Manager is the operational actor, via publishing) | Groups sessions | ✅ | `Course` → `Session` |
+| `Session` | Platform-owned (Content Manager is the operational actor, via publishing) | One learning unit | ✅ | `Subject` → `Publication`/`ContentVersion` |
 | `ContentVersion` | Content Manager | One authored, versioned snapshot of a session's content | ✅ | `Session`, `ContentPackage`, `Exercise` |
 | `Exercise` | Content Manager | The exercise belonging to one `ContentVersion` | ✅ | `ContentVersion` → `ExerciseSubmission` |
 | `ContentPackage` | Content Manager | One ZIP import event / review workflow instance | ✅ | → `ContentVersion`, `ContentReview` |
@@ -473,7 +479,7 @@ This corrects the task's illustrative sketch in two ways the audit demanded: (1)
 
 ## 20. Critical Decisions — explicit answers
 
-1. **Canonical Course/Subject/Session model:** one platform-owned set of tables (§3), populated/updated only via the Content Manager publish pipeline — never embedded in packages, never hardcoded in app code. Display fields always reflect "as of last publish," so draft/review changes never leak to students.
+1. **Canonical Course/Subject/Session model:** one platform-owned set of tables (§3); Content Manager is the operational actor that populates/updates them today, only via the publish pipeline — never embedded in packages, never hardcoded in app code. Display fields always reflect "as of last publish," so draft/review changes never leak to students. Ownership stays with the platform (not Content Manager) specifically so a future Admin curriculum capability wouldn't require re-homing these entities — no such capability is proposed now.
 2. **Do we need Enrollment?** Yes (§4) — required the moment the backend supports more than one student, which it must from day one.
 3. **Relationship between Session and ContentVersion:** one `Session` has many `ContentVersion`s over time (its full authored history); exactly one is "current" at any moment, determined by `Publication` (§5/§7), never by an unversioned "SessionContent" table.
 4. **How is the current published version identified?** The `Publication` row for that `sessionId` with `supersededAt IS NULL` (§7/§9) — a direct, indexed lookup, not a sort.
@@ -483,8 +489,39 @@ This corrects the task's illustrative sketch in two ways the audit demanded: (1)
 8. **Does Exercise need its own entity?** Yes — a small, real entity with its own id, currently always 1:1 with a `ContentVersion`, so future multi-exercise support doesn't require migrating historical submissions (§12).
 9. **Does Portfolio need separate Project entities?** Yes, `PortfolioProject` is a real child entity (it already has real identity today). Skills stays a simple structured field, not normalized (§13).
 10. **Do we need an AuditEvent table for MVP?** No — not required; every needed activity is already reconstructible from the core entities once actor fields exist on `ContentReview`/`Publication`. Recommended as a **SHOULD HAVE** for later, not a blocker now (§16).
-11. **Do we retain original Content ZIPs?** Yes, recommended — store the original blob for provenance alongside the normalized parsed data, which remains the live data source (§17).
+11. **Do we retain original Content ZIPs?** Recommended, but a **SHOULD HAVE, not a MUST HAVE** — the normalized parsed data (`ContentVersion`, `Exercise`, etc.) is the required, load-bearing piece; original-ZIP retention is additive provenance that can ship on day one if the chosen storage makes it cheap, or immediately after, without blocking or redesigning the core backend (§17).
 12. **Which entities are absolutely required before backend implementation begins?** The full "Core MVP entities" table in §18 — `User`, `Enrollment`, `Course`, `Subject`, `Session`, `ContentVersion`, `Exercise`, `ContentPackage`, `ContentReview`, `Publication`, `SessionCompletion`, `SessionPerformance`, `ExerciseSubmission`, `Portfolio`, `PortfolioProject`. Nothing in the "Future" list blocks starting implementation.
+
+---
+
+## Frozen Decisions Summary
+
+This domain model is **approved and frozen** as of this revision. The table below is the at-a-glance reference; every row is fully specified in the sections above and does not need to be re-litigated before technology selection begins.
+
+| Area | Decision |
+|---|---|
+| Users | Single `User` + `role` |
+| Students | N students from day one |
+| Enrollment | Yes |
+| Course → Subject → Session | Canonical, platform-owned hierarchy |
+| Session content | `ContentVersion` (no separate SessionContent entity) |
+| Draft content | Never visible to students |
+| Review | Append-only history (`ContentReview`) |
+| Publication | First-class entity |
+| Old publication | Explicitly superseded (`supersededAt`), set atomically |
+| Progress | Per student/session (`SessionCompletion`), derived percentages |
+| Performance | Latest only for MVP |
+| Exercise submissions | Every attempt retained |
+| Exercise | Own entity |
+| Portfolio | `Portfolio` + `PortfolioProject` |
+| Skills | Structured field, not separate tables |
+| ContentVersion internals (concepts/examples/video/practice/aiHelp/delivery) | Structured JSON fields, not normalized into per-element tables |
+| Admin | Read-only, no owned entities |
+| AuditEvent | Not required for MVP (SHOULD HAVE later) |
+| Original ZIP | SHOULD HAVE — day-one if cheap, otherwise immediately after core backend |
+| Company/Hiring | Out of MVP |
+
+**Next step:** Backend Architecture & Technology Selection — stack, database, authentication approach, file storage, and hosting, chosen against this frozen model and the business constraints already established, not selected first and fit to afterward. Not started in this document.
 
 ---
 

@@ -13,8 +13,10 @@ const NAV_ITEMS: AppShellNavItem[] = [
 export default function AdminLayout({ adminName, children }: { adminName: string; children: ReactNode }) {
   const navigate = useNavigate();
 
-  function handleLogout() {
-    clearAdminAccount();
+  async function handleLogout() {
+    // clearAdminAccount() is now a real backend call (Phase 0) — best-effort
+    // (see ../data/auth.ts), so this always navigates away regardless.
+    await clearAdminAccount();
     navigate("/admin/login");
   }
 

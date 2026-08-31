@@ -1,0 +1,426 @@
+// ---------------------------------------------------------------------------
+// NextStep2 backend schema.
+//
+// Phase 0 (per NEXTSTEP2_BACKEND_ARCHITECTURE_AND_TECHNOLOGY_SELECTION.md
+// Part 3/16) established: users (+ refresh tokens for real auth), the
+// canonical course/subject/session structure, and the content
+// package/version/publication chain needed for the read-only published-
+// content resolution path — ContentPackage/ContentVersion existed only as a
+// shape for content_versions to belong to, with no write path.
+//
+// Content-authoring-backend phase (this change) makes ContentPackage/
+// ContentVersion the real, authoritative authoring pipeline: ContentPackage
+// gains real session ownership and a mutable draft blob; ContentVersion
+// gains an append-only ContentReview trail recording every reviewer
+// decision (request-changes/approve/publish) against the exact immutable
+// version it was made against. Exercise deliberately stays embedded JSON on
+// ContentVersion, not its own table — same "normalizing ahead of any real
+// consumer" test already applied to `checkpoints` below, not yet met for
+// Exercise either (no evaluator/submission table exists yet to need one).
+//
+// AI Exercise Evaluation Slice 1 adds ExerciseSubmission: real, persisted
+// student submissions, pinned to the exact published ContentVersion they
+// were submitted against. Still no separate Exercise table — the rubric
+// stays embedded JSON on ContentVersion.exercise.
+//
+// Slice 2.0 adds ExerciseEvaluation + EvaluationStatus: the database
+// foundation for AI evaluation of those submissions (1:1 via
+// ExerciseSubmission.evaluation), per the Slice 2 architecture audit. No
+// service, controller, or AI provider exists yet — see each model's own
+// doc comment; that is later slices' work (2.1+).
+//
+// Still explicitly NOT in this schema (later phases): enrollments,
+// video_checkpoints/video_checkpoint_answers as their own tables,
+// session_completions, session_performance, portfolios, audit events.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+  CONTENT_AUTHOR
+  CONTENT_REVIEWER
+
+  @@map("role")
+}
+
+enum PackageStatus {
+  DRAFT
+  READY_FOR_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  PUBLISHED
+
+  @@map("package_status")
+}
+
+/// One reviewer decision. Append-only — no service method ever updates or
+/// deletes a row here, only INSERT. APPROVED is a review action like any
+/// other (action = APPROVED), not a separate "Approval" entity; PUBLISHED
+/// gets its own row here too, as the audit-trail companion to the
+/// Publication row created in the same transaction (Publication itself
+/// remains the sole "is it live" fact — see its own doc comment below).
+enum ContentReviewAction {
+  CHANGES_REQUESTED
+  APPROVED
+  PUBLISHED
+
+  @@map("content_review_action")
+}
+
+/// AI Exercise Evaluation Slice 2.0 — lifecycle of one ExerciseEvaluation
+/// row, per the Slice 2 architecture audit (§E): PENDING is set the moment
+/// an evaluation is queued for a submission; EVALUATING marks the provider
+/// call actually in flight; EVALUATED and FAILED are the two terminal
+/// states. No service/provider exists yet to drive these transitions — this
+/// enum exists purely as the database foundation for that later slice.
+enum EvaluationStatus {
+  PENDING
+  EVALUATING
+  EVALUATED
+  FAILED
+
+  @@map("evaluation_status")
+}
+
+/// A single users table with a role column — per the frozen domain model §1,
+/// extended from three roles to four (the Content Author/Reviewer split,
+/// already implemented at the frontend layer — see the architecture doc's
+/// reconciliation note). No per-role identity tables.
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role
+  name         String
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  refreshTokens       RefreshToken[]
+  importedPackages    ContentPackage[]     @relation("PackageAuthor")
+  publications        Publication[]        @relation("PublicationPublisher")
+  contentReviews      ContentReview[]      @relation("ContentReviewReviewer")
+  exerciseSubmissions ExerciseSubmission[]
+
+  @@map("users")
+}
+
+/// Supports real refresh-token rotation/revocation (Phase 0 explicitly asks
+/// for refresh tokens, not just a stateless access token) — the token itself
+/// is never stored, only a hash of it, so a leaked database row alone cannot
+/// be replayed as a valid refresh token.
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+/// Platform-owned curriculum structure — per the domain model §3, never
+/// embedded inside a content package, never hardcoded in application code.
+/// Seeded in Phase 0 to match the frontend's current hardcoded mock.ts
+/// exactly (see prisma/seed.ts) — no authoring-write path creates these yet.
+model Course {
+  id          String    @id
+  title       String
+  description String
+  subjects    Subject[]
+
+  @@map("courses")
+}
+
+model Subject {
+  id          String   @id
+  courseId    String   @map("course_id")
+  course      Course   @relation(fields: [courseId], references: [id])
+  title       String
+  description String
+  order       Int
+  sessions    Session[]
+
+  @@index([courseId])
+  @@map("subjects")
+}
+
+model Session {
+  id          String   @id
+  subjectId   String   @map("subject_id")
+  subject     Subject  @relation(fields: [subjectId], references: [id])
+  title       String
+  description String
+  order       Int
+
+  contentVersions     ContentVersion[]
+  publications        Publication[]
+  contentPackages     ContentPackage[]
+  exerciseSubmissions ExerciseSubmission[]
+
+  @@index([subjectId])
+  @@map("sessions")
+}
+
+/// One import/authoring event and its own workflow status — per the domain
+/// model §6. As of the content-authoring-backend phase, this is the real,
+/// authoritative envelope for one session's in-progress authoring: `session`
+/// is which session it's for (required — a package always belongs to
+/// exactly one session, matching the frontend's one-course/one-subject/
+/// one-session-per-package authoring model), `draftContent` is the mutable
+/// AuthoredSessionDraft-shaped blob the author edits/autosaves freely while
+/// status is DRAFT/CHANGES_REQUESTED, and `currentContentVersion` points at
+/// whichever immutable ContentVersion was most recently snapshotted from it
+/// (set only by the submit-for-review action, never by a draft autosave).
+model ContentPackage {
+  id           String        @id @default(uuid())
+  fileName     String        @map("file_name")
+  importedAt   DateTime      @default(now()) @map("imported_at")
+  importedById String        @map("imported_by_id")
+  importedBy   User          @relation("PackageAuthor", fields: [importedById], references: [id])
+  status       PackageStatus @default(DRAFT)
+
+  sessionId String  @map("session_id")
+  session   Session @relation(fields: [sessionId], references: [id])
+
+  draftContent Json? @map("draft_content")
+
+  currentContentVersionId String?         @unique @map("current_content_version_id")
+  currentContentVersion   ContentVersion? @relation("PackageCurrentVersion", fields: [currentContentVersionId], references: [id])
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  contentVersions ContentVersion[] @relation("PackageVersions")
+  contentReviews  ContentReview[]
+
+  @@index([sessionId])
+  @@map("content_packages")
+}
+
+/// One authored, versioned snapshot of a session's content — per the domain
+/// model §5. Immutable once created (Phase 0 exposes no update endpoint at
+/// all for these — a real update path is Phase 1's authoring-write work).
+///
+/// Structured sub-fields stay JSON here exactly as the domain model §5
+/// decided (video/practice/aiHelp/exercise/delivery) — nothing in the
+/// current app queries, filters, or joins across them independently of the
+/// whole ContentVersion they belong to. `checkpoints` also stays embedded
+/// JSON for Phase 0 specifically because no checkpoint-answer persistence
+/// or server-side correctness verification is being built yet (that is what
+/// would justify promoting it to its own table, per the architecture doc's
+/// Part 3/7 reasoning) — promoting it now would be normalizing ahead of any
+/// real consumer, which the domain model explicitly warns against.
+model ContentVersion {
+  id        String         @id @default(uuid())
+  sessionId String         @map("session_id")
+  session   Session        @relation(fields: [sessionId], references: [id])
+  packageId String         @map("package_id")
+  package   ContentPackage @relation("PackageVersions", fields: [packageId], references: [id])
+
+  objective          String
+  /// Missing from the Phase 0 schema entirely — SessionContent.explanation
+  /// is a real, rendered student-facing field (SessionWorkspace.tsx) that
+  /// Phase 0's read-only path simply never had a column for. Added here
+  /// rather than left as a silent data-loss gap now that a real write path
+  /// exists.
+  explanation        String   @default("")
+  concepts           String[]
+  keyConcepts        String[] @map("key_concepts")
+  examples           String[]
+  video              Json?
+  checkpoints        Json
+  practice           Json
+  /// Nullable, matching video/delivery — a session legitimately has no AI
+  /// Tutor configured (aiHelpIncluded: false in the authoring draft), and
+  /// that must be representable as "absent," not forced into a fabricated
+  /// empty object.
+  aiHelp             Json?    @map("ai_help")
+  exercise           Json
+  requiredActivities String[] @map("required_activities")
+  projectConnection  String?  @map("project_connection")
+  delivery           Json?
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  publications      Publication[]
+  contentReviews    ContentReview[]
+  /// The (at most one) ContentPackage currently pointing at this version as
+  /// its `currentContentVersion` — the inverse side of that relation, not a
+  /// second foreign key. A version can still be referenced by past
+  /// ContentReview rows even after a package moves on to a newer version.
+  currentForPackage   ContentPackage?      @relation("PackageCurrentVersion")
+  exerciseSubmissions ExerciseSubmission[]
+
+  @@index([sessionId])
+  @@map("content_versions")
+}
+
+/// The fact that a ContentVersion is (or was) live for a Session — per the
+/// domain model §7/§9. This is the ONLY table the student-facing read path
+/// (Part 4 of the architecture doc) is allowed to resolve "current content"
+/// from — never package status, never a recency sort.
+///
+/// The partial unique index enforcing "at most one live Publication per
+/// session" is added by raw SQL in the initial migration (Prisma's schema
+/// language has no `WHERE` clause for @@unique) — see
+/// prisma/migrations/20260825120000_init/migration.sql's final statement.
+model Publication {
+  id               String         @id @default(uuid())
+  contentVersionId String         @map("content_version_id")
+  contentVersion   ContentVersion @relation(fields: [contentVersionId], references: [id])
+  sessionId        String         @map("session_id")
+  session          Session        @relation(fields: [sessionId], references: [id])
+  publishedById    String         @map("published_by_id")
+  publishedBy      User           @relation("PublicationPublisher", fields: [publishedById], references: [id])
+  publishedAt      DateTime       @default(now()) @map("published_at")
+  supersededAt     DateTime?      @map("superseded_at")
+
+  @@index([sessionId, supersededAt])
+  @@map("publications")
+}
+
+/// Append-only audit trail of every reviewer decision — request-changes,
+/// approve, and publish each insert exactly one row here, and no service
+/// method ever updates or deletes one. Always pins `contentVersionId` to
+/// whichever ContentVersion the decision was actually made against, so a
+/// package that goes through two changes-requested cycles keeps both
+/// reviews attributed to their own distinct version — never one mutable
+/// object silently overwritten by the next review action (the gap this
+/// replaces from the pre-backend localStorage model's single `review`
+/// field on ContentPackageRecord).
+model ContentReview {
+  id               String              @id @default(uuid())
+  packageId        String              @map("package_id")
+  package          ContentPackage      @relation(fields: [packageId], references: [id])
+  contentVersionId String              @map("content_version_id")
+  contentVersion   ContentVersion      @relation(fields: [contentVersionId], references: [id])
+  reviewerId       String              @map("reviewer_id")
+  reviewer         User                @relation("ContentReviewReviewer", fields: [reviewerId], references: [id])
+  action           ContentReviewAction
+  checklist        Json?
+  notes            String?
+  createdAt        DateTime            @default(now()) @map("created_at")
+
+  @@index([packageId])
+  @@index([contentVersionId])
+  @@map("content_reviews")
+}
+
+/// Slice 1 of AI Exercise Evaluation — real, backend-persisted Exercise
+/// submissions (replaces the browser-local exerciseSubmissions.ts). No
+/// separate Exercise table: the exercise being submitted against is
+/// whatever ContentVersion.exercise JSON was published for this session at
+/// submission time, per the "don't normalize ahead of a real consumer" test
+/// already applied elsewhere in this schema. `contentVersionId` pins the
+/// submission to that exact immutable version forever, even after a later
+/// republish changes what's currently live — this is what lets a future
+/// evaluator read the rubric the student actually saw, not whatever is live
+/// when evaluation happens to run. Deliberately no status/score/evaluation
+/// fields yet — that is a later slice's table (ExerciseEvaluation), not this
+/// one. The backend derives studentId (from the JWT), sessionId +
+/// contentVersionId (from the currently-published Publication for the
+/// route's session), and attemptNumber (server-computed, never client-sent)
+/// — the client supplies only `files`.
+model ExerciseSubmission {
+  id               String         @id @default(uuid())
+  studentId        String         @map("student_id")
+  student          User           @relation(fields: [studentId], references: [id])
+  sessionId        String         @map("session_id")
+  session          Session        @relation(fields: [sessionId], references: [id])
+  contentVersionId String         @map("content_version_id")
+  contentVersion   ContentVersion @relation(fields: [contentVersionId], references: [id])
+
+  language      String
+  files         Json
+  attemptNumber Int      @map("attempt_number")
+  submittedAt   DateTime @default(now()) @map("submitted_at")
+
+  /// Inverse side of ExerciseEvaluation's 1:1 relation (see that model's own
+  /// doc comment) — nullable because a submission does not necessarily have
+  /// an evaluation yet (no service creates one as of Slice 2.0).
+  evaluation ExerciseEvaluation?
+
+  @@unique([studentId, sessionId, attemptNumber])
+  @@index([studentId, sessionId])
+  @@index([contentVersionId])
+  @@map("exercise_submissions")
+}
+
+/// AI Exercise Evaluation Slice 2.0 — database foundation only (per the
+/// Slice 2 architecture audit §D). One row per ExerciseSubmission attempt,
+/// 1:1 via `submissionId @unique` — a re-evaluation updates this row in
+/// place rather than accumulating a new one, so "the current evaluation for
+/// this submission" is always unambiguous (§E).
+///
+/// Deliberately NO `contentVersionId` column here: ExerciseSubmission
+/// already pins the exact immutable ContentVersion an attempt was submitted
+/// against (see its own doc comment), and that FK is permanent — a later
+/// edit/republish creates a brand new ContentVersion/Publication, never
+/// touching the old one. Duplicating that reference here would be a second,
+/// redundant source of truth for something already derivable via
+/// `submission.contentVersionId`; the evaluator must always read the
+/// Exercise spec through `submission.contentVersion.exercise`, never by
+/// re-resolving "what's currently published" for the session (§G) — this is
+/// what keeps a later Content Author edit from ever changing the grading
+/// context of an older submission (§8 of the audit's IMPORTANT PRINCIPLES).
+///
+/// retryCount/nextAttemptAt (AI Evaluation Reliability slice) turn this row
+/// into a small, safe, PostgreSQL-backed job queue entry: EvaluationWorkerService
+/// claims eligible rows with `SELECT ... FOR UPDATE SKIP LOCKED`, so multiple
+/// concurrent worker slots (or, later, multiple backend processes) can never
+/// claim the same row twice. No separate queue table or external broker —
+/// this row already has everything a queue entry needs (status + retry
+/// bookkeeping + a natural unique key back to its ExerciseSubmission).
+model ExerciseEvaluation {
+  id           String             @id @default(uuid())
+  submissionId String             @unique @map("submission_id")
+  submission   ExerciseSubmission @relation(fields: [submissionId], references: [id])
+
+  status EvaluationStatus @default(PENDING)
+
+  /// 0-100, or null until status = EVALUATED. Application-layer validation
+  /// (not a DB constraint) is responsible for clamping/rejecting anything
+  /// outside that range before it is ever persisted (§F) — never trusted
+  /// directly from a provider response.
+  overallScore Int? @map("overall_score")
+  /// Structured per-criterion results (shape intentionally not frozen yet —
+  /// see the audit's §F note that the exact JSON shape is an implementation-
+  /// slice decision, not an architecture-slice one).
+  criteriaResults Json?    @map("criteria_results")
+  strengths       String[]
+  improvements    String[]
+  feedback        String?
+  /// Internal/operator-facing only when status = FAILED — never surfaced to
+  /// the student verbatim (§K).
+  failureReason String? @map("failure_reason")
+  /// Which AiEvaluatorProvider implementation produced this result — for
+  /// audit only, never client-supplied.
+  providerName String?   @map("provider_name")
+  /// AI Evaluation Reliability slice — background worker bookkeeping, not
+  /// exposed to any client. How many attempts (including the current one)
+  /// have been made — bounds retry, and lets a reclaimed stale EVALUATING
+  /// row (worker crashed mid-attempt) count toward the same limit as a real
+  /// provider failure, rather than retrying forever.
+  retryCount Int @default(0) @map("retry_count")
+  /// Null = eligible for pickup as soon as status allows it. Set to a future
+  /// time after a retryable failure (exponential backoff, or the provider's
+  /// own Retry-After on a 429) so the worker's claim query naturally skips
+  /// this row until it's actually due — never a busy/tight retry loop.
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  attemptedAt  DateTime  @default(now()) @map("attempted_at")
+  evaluatedAt  DateTime? @map("evaluated_at")
+
+  @@index([status])
+  @@index([status, nextAttemptAt])
+  @@map("exercise_evaluations")
+}

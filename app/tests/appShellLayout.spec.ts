@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { loginAsAdmin, loginAsContentManager } from "./fixtures/helpers";
+import { loginAsAdmin, loginAsContentAuthor, loginAsContentReviewer } from "./fixtures/helpers";
 
 test.describe("App shell: per-role navigation", () => {
   test("Student uses the shared shell with exactly its four nav items and no role badge", async ({ page }) => {
@@ -14,19 +14,40 @@ test.describe("App shell: per-role navigation", () => {
     await expect(sidebar.getByRole("link")).toHaveCount(4);
 
     // No leaked role links, and no role badge (Student never had one).
-    await expect(page.getByText("Content Manager")).toHaveCount(0);
+    await expect(page.getByText("Content Author")).toHaveCount(0);
+    await expect(page.getByText("Content Reviewer")).toHaveCount(0);
     await expect(page.getByText("Admin", { exact: true })).toHaveCount(0);
   });
 
-  test("Content Manager uses the shared shell with exactly one Content nav item and an identifying badge", async ({ page }) => {
-    await loginAsContentManager(page);
+  test("Content Author uses the shared shell with exactly Dashboard/Courses/My Submissions and an identifying badge", async ({ page }) => {
+    await loginAsContentAuthor(page);
 
     const sidebar = page.locator("aside");
     await expect(sidebar).toBeVisible();
-    await expect(sidebar.getByRole("link", { name: "Content" })).toBeVisible();
-    await expect(sidebar.getByRole("link")).toHaveCount(1);
+    await expect(sidebar.getByRole("link", { name: "Dashboard" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Courses" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "My Submissions" })).toBeVisible();
+    await expect(sidebar.getByRole("link")).toHaveCount(3);
 
-    await expect(page.getByText("Content Manager").first()).toBeVisible();
+    await expect(page.getByText("Content Author").first()).toBeVisible();
+    // Approval-only controls never leak into the Author's badge/nav.
+    await expect(page.getByText("Content Reviewer")).toHaveCount(0);
+  });
+
+  test("Content Reviewer uses the shared shell with exactly its five nav items and an identifying badge", async ({ page }) => {
+    await loginAsContentReviewer(page);
+
+    const sidebar = page.locator("aside");
+    await expect(sidebar).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Dashboard" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Pending Review" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Changes Requested" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Approved" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Published" })).toBeVisible();
+    await expect(sidebar.getByRole("link")).toHaveCount(5);
+
+    await expect(page.getByText("Content Reviewer").first()).toBeVisible();
+    await expect(page.getByText("Content Author")).toHaveCount(0);
   });
 
   test("Admin uses the shared shell with exactly Dashboard/Students/Content and an identifying badge", async ({ page }) => {
@@ -48,10 +69,17 @@ test.describe("App shell: per-role navigation", () => {
     await expect(page.locator("aside").getByRole("link", { name: "Performance" })).toHaveClass(/bg-brand-50/);
     await expect(page.locator("aside").getByRole("link", { name: "Dashboard" })).not.toHaveClass(/bg-brand-50/);
 
-    // Content Manager
-    await loginAsContentManager(page);
-    await page.goto("/content/dashboard");
-    await expect(page.locator("aside").getByRole("link", { name: "Content" })).toHaveClass(/bg-brand-50/);
+    // Content Author
+    await loginAsContentAuthor(page);
+    await page.goto("/content/submissions");
+    await expect(page.locator("aside").getByRole("link", { name: "My Submissions" })).toHaveClass(/bg-brand-50/);
+    await expect(page.locator("aside").getByRole("link", { name: "Dashboard" })).not.toHaveClass(/bg-brand-50/);
+
+    // Content Reviewer
+    await loginAsContentReviewer(page);
+    await page.goto("/review/approved");
+    await expect(page.locator("aside").getByRole("link", { name: "Approved" })).toHaveClass(/bg-brand-50/);
+    await expect(page.locator("aside").getByRole("link", { name: "Dashboard" })).not.toHaveClass(/bg-brand-50/);
 
     // Admin
     await loginAsAdmin(page);
@@ -64,7 +92,7 @@ test.describe("App shell: per-role navigation", () => {
 
 test.describe("App shell: authentication boundaries", () => {
   test("login/signup pages never render the authenticated shell", async ({ page }) => {
-    for (const path of ["/login", "/signup", "/content/login", "/admin/login"]) {
+    for (const path of ["/login", "/signup", "/content/login", "/review/login", "/admin/login"]) {
       await page.goto(path);
       await expect(page.locator("aside")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Open menu" })).toHaveCount(0);
@@ -72,12 +100,18 @@ test.describe("App shell: authentication boundaries", () => {
     }
   });
 
-  test("logout works for Content Manager and Admin and returns to their own login", async ({ page }) => {
-    await loginAsContentManager(page);
+  test("logout works for Content Author, Content Reviewer, and Admin and returns to their own login", async ({ page }) => {
+    await loginAsContentAuthor(page);
     await page.locator("aside").getByRole("button", { name: "Log Out" }).click();
     await expect(page).toHaveURL(/\/content\/login/);
     await page.goto("/content/dashboard");
     await expect(page).toHaveURL(/\/content\/login/); // logout actually cleared the session
+
+    await loginAsContentReviewer(page);
+    await page.locator("aside").getByRole("button", { name: "Log Out" }).click();
+    await expect(page).toHaveURL(/\/review\/login/);
+    await page.goto("/review/dashboard");
+    await expect(page).toHaveURL(/\/review\/login/);
 
     await loginAsAdmin(page);
     await page.locator("aside").getByRole("button", { name: "Log Out" }).click();
@@ -86,27 +120,37 @@ test.describe("App shell: authentication boundaries", () => {
     await expect(page).toHaveURL(/\/admin\/login/);
   });
 
-  test("role sessions stay isolated and refresh preserves the authenticated shell", async ({ page }) => {
-    await loginAsContentManager(page, "cm@nextstep2.com");
+  test("role sessions stay isolated and refresh preserves each role's authenticated shell", async ({ page }) => {
+    await loginAsContentAuthor(page, "author@nextstep2.com");
+    await loginAsContentReviewer(page, "reviewer@nextstep2.com");
     await loginAsAdmin(page, "admin@nextstep2.com");
 
     const stored = await page.evaluate(() => ({
       admin: window.localStorage.getItem("nextstep2:adminAccount"),
-      contentManager: window.localStorage.getItem("nextstep2:contentManagerAccount"),
+      contentAuthor: window.localStorage.getItem("nextstep2:contentAuthorAccount"),
+      contentReviewer: window.localStorage.getItem("nextstep2:contentReviewerAccount"),
     }));
     expect(stored.admin).toContain("admin@nextstep2.com");
-    expect(stored.contentManager).toContain("cm@nextstep2.com");
+    expect(stored.contentAuthor).toContain("author@nextstep2.com");
+    expect(stored.contentReviewer).toContain("reviewer@nextstep2.com");
 
     // Refresh keeps the Admin shell (currently logged-in role).
     await page.reload();
     await expect(page).toHaveURL(/\/admin\/dashboard/);
     await expect(page.locator("aside")).toBeVisible();
 
-    // Content Manager's own session is still intact underneath.
+    // Content Author's own session is still intact underneath.
     await page.goto("/content/dashboard");
     await expect(page).toHaveURL(/\/content\/dashboard/);
     await page.reload();
     await expect(page).toHaveURL(/\/content\/dashboard/);
+    await expect(page.locator("aside")).toBeVisible();
+
+    // Content Reviewer's own session is also still intact underneath.
+    await page.goto("/review/dashboard");
+    await expect(page).toHaveURL(/\/review\/dashboard/);
+    await page.reload();
+    await expect(page).toHaveURL(/\/review\/dashboard/);
     await expect(page.locator("aside")).toBeVisible();
   });
 });

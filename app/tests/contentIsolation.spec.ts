@@ -1,21 +1,25 @@
 import { test, expect } from "@playwright/test";
 import {
-  buildContentPackageZip,
-  buildSingleSessionPackage,
+  loginAsContentAuthor,
+  authorAndPublish,
   REAL_COURSE_ID,
   REAL_SUBJECT_ID,
   REAL_SESSION_ID,
-} from "./fixtures/buildContentPackageZip";
-import { loginAsContentManager, importAndPublish } from "./fixtures/helpers";
+  REAL_SESSION_TITLE,
+} from "./fixtures/helpers";
 
 const MARKER = "PKGMARKER-ISOLATION-TEST-CONTENT";
 const studentSessionUrl = `/session/${REAL_SESSION_ID}`;
 
 test.describe("Isolation: unrelated sessions and existing content", () => {
   test("publishing one package does not expose unrelated sessions, and existing curated/fallback content keeps working", async ({ page }) => {
-    await loginAsContentManager(page);
-    const zip = await buildContentPackageZip(buildSingleSessionPackage(REAL_COURSE_ID, REAL_SUBJECT_ID, REAL_SESSION_ID, MARKER));
-    await importAndPublish(page, "isolation-target.zip", zip);
+    await loginAsContentAuthor(page);
+    await authorAndPublish(page, {
+      courseId: REAL_COURSE_ID,
+      subjectId: REAL_SUBJECT_ID,
+      sessionTitle: REAL_SESSION_TITLE,
+      objective: MARKER,
+    });
 
     // The published session shows the new content.
     await page.goto(studentSessionUrl);
@@ -107,12 +111,14 @@ test.describe("Isolation: status matrix", () => {
   });
 });
 
-test.describe("Isolation: student routes never expose Content Manager controls", () => {
-  test("no Content Manager links/branding appear on student pages", async ({ page }) => {
+test.describe("Isolation: student routes never expose Content Author/Reviewer controls", () => {
+  test("no Content Author/Reviewer links/branding appear on student pages", async ({ page }) => {
     for (const path of ["/dashboard", "/my-course", studentSessionUrl]) {
       await page.goto(path);
       await expect(page.locator('a[href^="/content"]')).toHaveCount(0);
-      await expect(page.getByText("Content Manager", { exact: false })).toHaveCount(0);
+      await expect(page.locator('a[href^="/review"]')).toHaveCount(0);
+      await expect(page.getByText("Content Author", { exact: false })).toHaveCount(0);
+      await expect(page.getByText("Content Reviewer", { exact: false })).toHaveCount(0);
     }
   });
 });

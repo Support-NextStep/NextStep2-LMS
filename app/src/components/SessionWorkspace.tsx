@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "./Button";
 import PracticeCodeEmbed from "./PracticeCodeEmbed";
 import ExerciseCodeEmbed from "./ExerciseCodeEmbed";
+import VideoCheckpointPlayer from "./VideoCheckpointPlayer";
 import { getPracticeLanguageLabel, type CodeFile } from "../data/practiceExecution";
 import {
   getLiveSessionState,
@@ -11,15 +12,15 @@ import {
   type SessionContent,
   type SessionDelivery,
 } from "../data/sessionContent";
-import type { SessionActivitiesInput } from "../data/performance";
+import { calculateSessionScore, type SessionActivitiesInput } from "../data/performance";
 
 // ---------------------------------------------------------------------------
-// The actual Session Workspace UI — Learn / Video Check / Practice / AI Help
-// / Exercise / Complete — shared verbatim between the real Student Session
-// (SessionPage.tsx) and the Content Manager's Draft Preview
-// (ContentPreviewSession.tsx). Neither wrapper duplicates this UI; they only
-// supply *where the content comes from* and *what happens on
-// complete/submit*, via props.
+// The actual Session Workspace UI — Learn / Video Check / Practice / Exercise
+// / Complete, plus a persistent "Need Help?" AI assistance widget — shared
+// verbatim between the real Student Session (SessionPage.tsx) and the
+// Content Author/Reviewer's Draft Preview (ContentPreviewSession.tsx).
+// Neither wrapper duplicates this UI; they only supply *where the content
+// comes from* and *what happens on complete/submit*, via props.
 //
 // mode="student": every side effect (completeSession, recordSessionPerformance,
 //   createSubmission) is real, wired up by the SessionPage.tsx wrapper.
@@ -28,6 +29,17 @@ import type { SessionActivitiesInput } from "../data/performance";
 //   calls whatever callback it was given. That's what keeps preview
 //   completely inert with respect to student records without this file
 //   needing any "if preview" branches around persistence.
+//
+// STUDENT SESSION UI CLEANUP (see that slice's report):
+//   - Practice is guided experimentation only — Self-Check and AI Hint were
+//     removed from it. It's just task + starter code + the OneCompiler
+//     editor (Run + output live inside that embed already).
+//   - AI Help is no longer a third tab. Its content-authored data
+//     (content.aiHelp — quickPrompts/replies/defaultReply, still authored by
+//     the Content Team, still used by both this component's chat-reply logic
+//     and by the Reviewer's read-only preview) is unchanged; only *how a
+//     student reaches it* changed, from a tab to the floating "Need Help?"
+//     widget rendered at the bottom of this component.
 // ---------------------------------------------------------------------------
 
 const ACTIVITY_LABEL: Record<ActivityKey, string> = {
@@ -43,8 +55,6 @@ export type SessionWorkspaceProps = {
   mode: "student" | "preview";
   sessionId: string;
   content: SessionContent;
-  /** Only meaningful in preview — the live student SessionContent type has no video field (see sessionContent.ts). */
-  video?: { youtubeUrl: string; title: string };
   courseTitle: string;
   subjectTitle: string;
   sessionTitle: string;
@@ -56,7 +66,7 @@ export type SessionWorkspaceProps = {
   greetingName: string;
   initialSubmissions: SubmissionSummary[];
   onCompleteSession: (activities: SessionActivitiesInput) => void;
-  onSubmitExercise: (files: CodeFile[], language: string) => SubmissionSummary;
+  onSubmitExercise: (files: CodeFile[], language: string) => Promise<SubmissionSummary>;
   backHref: string;
   backLabel: string;
   getNextSessionHref: (nextSessionId: string) => string;
@@ -68,7 +78,7 @@ export type SessionWorkspaceProps = {
 
 type ChatMessage = { id: number; role: "user" | "ai"; text: string };
 type VideoState = "idle" | "playing" | "checkpoint" | "answered" | "finished";
-type WorkspaceView = "default" | "practice" | "ai-help" | "exercise" | "complete";
+type WorkspaceView = "practice" | "exercise" | "complete";
 
 function CheckIcon({ className }: { className?: string }) {
   return (
@@ -102,6 +112,18 @@ function ArrowIcon({ className }: { className?: string }) {
   );
 }
 
+function LightbulbIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className={className}>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9 18h6m-5.25 3h4.5M12 3a6 6 0 00-3.5 10.89c.47.34.75.9.75 1.49v.12a.5.5 0 00.5.5h4.5a.5.5 0 00.5-.5v-.12c0-.6.28-1.15.75-1.49A6 6 0 0012 3z"
+      />
+    </svg>
+  );
+}
+
 function SectionCard({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <div className={`rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 ${className}`}>{children}</div>;
 }
@@ -114,12 +136,6 @@ function formatScheduledAt(iso: string) {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-/** Extracts a YouTube video id from any of the supported URL shapes, for building an embed src. */
-function extractYouTubeId(url: string): string | null {
-  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]+)/i);
-  return match ? match[1] : null;
 }
 
 /**
@@ -220,7 +236,6 @@ export default function SessionWorkspace({
   mode,
   sessionId,
   content,
-  video,
   courseTitle,
   subjectTitle,
   sessionTitle,
@@ -247,19 +262,38 @@ export default function SessionWorkspace({
   const [checkpointSeen, setCheckpointSeen] = useState(false);
   const [checkpointAnswer, setCheckpointAnswer] = useState<number | null>(null);
 
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("default");
+  // Real-video state (only relevant when content.video is set — see
+  // hasRealVideo below). Owned here, not inside VideoCheckpointPlayer,
+  // because completion/performance logic needs to read it.
+  const [videoAnswers, setVideoAnswers] = useState<Record<string, boolean>>({});
+  const [videoEnded, setVideoEnded] = useState(false);
+
+  // Starts on "practice" directly — no separate landing/"Start Practice"
+  // card. See the effect below: opening the Practice tab is what marks the
+  // Practice activity viewed, so this also means Practice counts as opened
+  // the moment the session loads (there is no longer a distinct "not yet
+  // opened" landing state to sit in first).
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("practice");
 
   const [chat, setChat] = useState<ChatMessage[]>([
     { id: 0, role: "ai", text: "Hi! I'm your AI Learning Assistant. Ask me anything about this session." },
   ]);
   const [chatInput, setChatInput] = useState("");
 
-  const [hintVisible, setHintVisible] = useState(false);
-  const [checked, setChecked] = useState(false);
+  // Practice is guided experimentation, not evaluation — "completed" just
+  // means the student opened Practice at least once, never a Self-Check
+  // correctness signal (there is no more Self-Check). See handleCompleteSession.
+  const [practiceViewed, setPracticeViewed] = useState(false);
+
+  // The "Need Help?" floating widget's open/closed state — independent of
+  // workspaceView, since it must stay reachable no matter which tab (or the
+  // pre-tab default view, or the completion screen) is currently showing.
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const [exerciseSubmitted, setExerciseSubmitted] = useState(false);
   const [exerciseFiles, setExerciseFiles] = useState<CodeFile[]>([]);
   const [exerciseSubmitPhase, setExerciseSubmitPhase] = useState<"idle" | "confirming" | "success">("idle");
+  const [exerciseSubmitError, setExerciseSubmitError] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionSummary[]>(initialSubmissions);
   const [lastSubmission, setLastSubmission] = useState<SubmissionSummary | null>(null);
 
@@ -271,14 +305,17 @@ export default function SessionWorkspace({
     setVideoState("idle");
     setCheckpointSeen(false);
     setCheckpointAnswer(null);
-    setWorkspaceView("default");
+    setVideoAnswers({});
+    setVideoEnded(false);
+    setWorkspaceView("practice");
     setChat([{ id: 0, role: "ai", text: "Hi! I'm your AI Learning Assistant. Ask me anything about this session." }]);
     setChatInput("");
-    setHintVisible(false);
-    setChecked(false);
+    setHelpOpen(false);
+    setPracticeViewed(false);
     setExerciseSubmitted(false);
     setExerciseFiles([]);
     setExerciseSubmitPhase("idle");
+    setExerciseSubmitError(null);
     setLastSubmission(null);
     setSubmissions(initialSubmissions);
     setLiveJoined(false);
@@ -286,13 +323,35 @@ export default function SessionWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
+  // initialSubmissions now arrives from a real backend fetch (SessionPage.tsx),
+  // which resolves *after* this component's first render for the session —
+  // the reset effect above only re-syncs `submissions` when sessionId itself
+  // changes, so this effect re-syncs whenever the parent hands us a freshly-
+  // fetched array. Safe against clobbering an optimistic local append (see
+  // handleConfirmExerciseSubmit) because the parent never re-fetches after a
+  // submit — initialSubmissions' reference only changes on a real session change.
+  useEffect(() => {
+    setSubmissions(initialSubmissions);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSubmissions]);
+
   useEffect(() => {
     if (videoState !== "playing") return;
     const timer = setTimeout(() => {
-      setVideoState(checkpointSeen ? "finished" : "checkpoint");
+      // A session with a video but no authored checkpoints (or none marked
+      // included) has nothing to pause for — go straight to finished rather
+      // than showing an empty checkpoint card.
+      setVideoState(checkpointSeen || content.checkpoints.length === 0 ? "finished" : "checkpoint");
     }, 1400);
     return () => clearTimeout(timer);
-  }, [videoState, checkpointSeen]);
+  }, [videoState, checkpointSeen, content.checkpoints.length]);
+
+  // Opening Practice at all is the only "completion" signal now that
+  // Self-Check is gone — deliberately not tied to running code or any
+  // correctness check (see the file header note on the Practice cleanup).
+  useEffect(() => {
+    if (workspaceView === "practice") setPracticeViewed(true);
+  }, [workspaceView]);
 
   function sendChat(text: string) {
     const trimmed = text.trim();
@@ -300,18 +359,18 @@ export default function SessionWorkspace({
     const userId = Date.now();
     setChat((c) => [...c, { id: userId, role: "user", text: trimmed }]);
     setChatInput("");
-    const reply = content.aiHelp.replies[trimmed] ?? content.aiHelp.defaultReply;
+    const reply = `I am a future AI Tutor. Real conversational responses are not yet integrated, but I've received your message: "${trimmed}"`;
     setTimeout(() => {
       setChat((c) => [...c, { id: userId + 1, role: "ai", text: reply }]);
     }, 500);
   }
 
   function reviewSession() {
-    setWorkspaceView("default");
+    setWorkspaceView("practice");
     setVideoState("idle");
   }
 
-  function handleConfirmExerciseSubmit() {
+  async function handleConfirmExerciseSubmit() {
     const filesToSubmit: CodeFile[] =
       exerciseFiles.length > 0
         ? exerciseFiles
@@ -319,37 +378,77 @@ export default function SessionWorkspace({
         ? [{ name: "starter", content: content.exercise.starterCode }]
         : [];
 
-    const submission = onSubmitExercise(filesToSubmit, content.exercise.language);
-    setSubmissions((prev) => [...prev, submission]);
-    setLastSubmission(submission);
-    setExerciseSubmitted(true);
-    setExerciseSubmitPhase("success");
+    setExerciseSubmitError(null);
+    try {
+      const submission = await onSubmitExercise(filesToSubmit, content.exercise.language);
+      setSubmissions((prev) => [...prev, submission]);
+      setLastSubmission(submission);
+      setExerciseSubmitted(true);
+      setExerciseSubmitPhase("success");
+    } catch (err) {
+      // Stay in "confirming" so Submit is one click away again, rather than
+      // silently dropping the student back to the plain "Submit Exercise"
+      // button as if nothing happened.
+      setExerciseSubmitError(err instanceof Error ? err.message : "Couldn't submit your exercise. Please try again.");
+    }
   }
 
-  const checkpointCorrect = checkpointAnswer === content.videoCheckpoint.correctIndex;
-
-  function handleCompleteSession() {
-    onCompleteSession({
-      learning: { completed: videoState === "finished" },
-      videoCheck: { completed: checkpointSeen, correct: checkpointSeen ? checkpointCorrect : null },
-      practice: {
-        completed: checked,
-        passedCount: content.practice.checklist.filter((c) => c.passed).length,
-        totalCount: content.practice.checklist.length,
-      },
-      exercise: { completed: exerciseSubmitted },
-    });
-    setWorkspaceView("complete");
-  }
+  // Used only by the no-video mock-playback fallback below (content.video
+  // absent) — the real-video path's checkpoint state lives in
+  // VideoCheckpointPlayer/useVideoCheckpoints and is reported up via
+  // videoAnswers/videoEnded instead. content.checkpoints is always an array
+  // now (possibly empty), never the old singular field.
+  const activeCheckpoint = content.checkpoints[0];
+  const checkpointCorrect = activeCheckpoint != null && checkpointAnswer === activeCheckpoint.correctIndex;
 
   const isLive = content.delivery?.format === "live";
   const liveState = isLive && content.delivery ? getLiveSessionState(content.delivery) : null;
-  const youtubeId = video ? extractYouTubeId(video.youtubeUrl) : null;
+  const hasRealVideo = Boolean(content.video);
+  const requiredCheckpoints = content.checkpoints.filter((c) => c.required);
+
+  // Unified completion signals — branch once, here, on hasRealVideo instead
+  // of scattering "if there's a real video" checks through every place that
+  // needs to know whether the lesson/video-check is done. See
+  // NEXTSTEP2_VIDEO_CHECKPOINT_SYSTEM.md §J: reuse SessionActivitiesInput
+  // verbatim, "completed" = every required checkpoint answered, "correct" =
+  // every required checkpoint answered correctly (null if none required).
+  const learningDone = isLive ? attended : hasRealVideo ? videoEnded : videoState === "finished";
+  const videoCheckDone = hasRealVideo ? requiredCheckpoints.every((c) => videoAnswers[c.id] !== undefined) : checkpointSeen;
+  const videoCheckCorrect = hasRealVideo
+    ? requiredCheckpoints.length === 0
+      ? null
+      : requiredCheckpoints.every((c) => videoAnswers[c.id] === true)
+    : checkpointSeen
+    ? checkpointCorrect
+    : null;
+
+  const handleVideoEnded = useCallback(() => setVideoEnded(true), []);
+  const handleVideoAnswersChange = useCallback((answers: Record<string, boolean>) => setVideoAnswers(answers), []);
+
+  // Single source of truth for both the persisted performance record and the
+  // on-screen Complete-screen percentage — see
+  // NEXTSTEP2_FRONTEND_BACKEND_DATA_CONTRACT_AUDIT.md's Performance
+  // unification cleanup. Practice never contributes a score (completion-only
+  // — Self-Check was retired); only Video Check currently can. Both readers
+  // below call calculateSessionScore() on this exact object, so they can
+  // never disagree.
+  const activities: SessionActivitiesInput = {
+    learning: { completed: learningDone },
+    videoCheck: { completed: videoCheckDone, correct: videoCheckCorrect },
+    practice: { completed: practiceViewed },
+    exercise: { completed: exerciseSubmitted },
+  };
+  const performanceScore = calculateSessionScore(activities);
+
+  function handleCompleteSession() {
+    onCompleteSession(activities);
+    setWorkspaceView("complete");
+  }
 
   const activityDone: Record<ActivityKey, boolean> = {
-    learning: isLive ? attended : videoState === "finished",
-    videoCheck: checkpointSeen,
-    practice: checked,
+    learning: learningDone,
+    videoCheck: videoCheckDone,
+    practice: practiceViewed,
     exercise: exerciseSubmitted,
   };
   const requirements = content.requiredActivities.map((key) => ({
@@ -358,12 +457,6 @@ export default function SessionWorkspace({
     done: activityDone[key],
   }));
   const isSessionReady = requirements.every((r) => r.done);
-
-  const practicePassed = content.practice.checklist.filter((r) => r.passed).length;
-  const practicePercent =
-    content.practice.checklist.length === 0 ? 0 : Math.round((practicePassed / content.practice.checklist.length) * 100);
-  const checkpointPercent = checkpointCorrect ? 100 : 50;
-  const performancePercent = Math.round((practicePercent + checkpointPercent) / 2);
 
   return (
     <div className="mx-auto flex flex-col gap-6">
@@ -402,7 +495,7 @@ export default function SessionWorkspace({
                       Attended
                     </span>
                   )
-                : videoState === "finished" && (
+                : learningDone && (
                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-600">
                       <CheckIcon className="h-3.5 w-3.5" />
                       Lesson watched
@@ -419,58 +512,21 @@ export default function SessionWorkspace({
                 onJoin={() => setLiveJoined(true)}
                 onMarkAttended={() => setAttended(true)}
               />
-            ) : video && youtubeId ? (
-              <div className="mt-4">
-                <p className="text-sm font-semibold text-navy-500">{video.title || "Session Video"}</p>
-                <div className="relative mt-2 aspect-video w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-                  <iframe
-                    title={video.title || "Session video"}
-                    src={`https://www.youtube.com/embed/${youtubeId}`}
-                    className="absolute inset-0 h-full w-full border-0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-                </div>
-
-                {/* A real embedded video can't be scripted to pause mid-playback, so
-                    Video Check renders as its own block underneath instead of the
-                    in-video overlay the mock player uses. */}
-                {content.videoCheckpoint.question && (
-                  <div className="mt-4 flex flex-col gap-4 rounded-xl bg-navy-500 p-5 sm:p-6">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-brand-300">Video Check</p>
-                    <p className="font-medium text-white">{content.videoCheckpoint.question}</p>
-
-                    {!checkpointSeen ? (
-                      <div className="flex flex-col gap-2">
-                        {content.videoCheckpoint.options.map((option, i) => (
-                          <button
-                            key={option}
-                            type="button"
-                            onClick={() => {
-                              setCheckpointAnswer(i);
-                              setCheckpointSeen(true);
-                            }}
-                            className="rounded-lg border border-white/20 bg-white/5 px-3.5 py-2 text-left text-sm font-medium text-white transition-colors hover:bg-white/15"
-                          >
-                            {option}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p
-                        className={`inline-flex items-center gap-1.5 text-sm font-semibold ${
-                          checkpointCorrect ? "text-brand-300" : "text-white"
-                        }`}
-                      >
-                        {checkpointCorrect ? <CheckIcon className="h-4 w-4" /> : <XIcon className="h-4 w-4" />}
-                        {checkpointCorrect
-                          ? "Correct!"
-                          : `Not quite — the answer is ${content.videoCheckpoint.options[content.videoCheckpoint.correctIndex]}.`}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
+            ) : content.video ? (
+              // The real YouTube player + sequential checkpoint playback —
+              // see NEXTSTEP2_VIDEO_CHECKPOINT_SYSTEM.md §E/F/G/K and
+              // VideoCheckpointPlayer.tsx. `key={sessionId}` fully remounts
+              // this (fresh player, fresh checkpoint state) whenever a
+              // different session is opened, rather than resetting an
+              // existing instance in place — see useVideoCheckpoints.ts's
+              // header comment.
+              <VideoCheckpointPlayer
+                key={sessionId}
+                video={content.video}
+                checkpoints={content.checkpoints}
+                onEnded={handleVideoEnded}
+                onAnswersChange={handleVideoAnswersChange}
+              />
             ) : isPreview ? (
               <div className="mt-4 flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center">
                 <p className="text-sm font-medium text-navy-500">No video configured for this session.</p>
@@ -505,14 +561,18 @@ export default function SessionWorkspace({
                     </div>
                   )}
 
-                  {(videoState === "checkpoint" || videoState === "answered") && (
+                  {/* activeCheckpoint is guaranteed non-null whenever videoState reaches
+                      "checkpoint"/"answered" (the timer above only transitions here when
+                      content.checkpoints is non-empty) — the check below is TS narrowing,
+                      not a real runtime possibility. */}
+                  {activeCheckpoint && (videoState === "checkpoint" || videoState === "answered") && (
                     <div className="flex w-full flex-col gap-4 rounded-xl bg-navy-500 p-5 sm:p-6">
                       <p className="text-xs font-semibold uppercase tracking-widest text-brand-300">Quick Check</p>
-                      <p className="font-medium text-white">{content.videoCheckpoint.question}</p>
+                      <p className="font-medium text-white">{activeCheckpoint.question}</p>
 
                       {videoState === "checkpoint" && (
                         <div className="flex flex-col gap-2">
-                          {content.videoCheckpoint.options.map((option, i) => (
+                          {activeCheckpoint.options.map((option, i) => (
                             <button
                               key={option}
                               type="button"
@@ -537,9 +597,7 @@ export default function SessionWorkspace({
                             }`}
                           >
                             {checkpointCorrect ? <CheckIcon className="h-4 w-4" /> : <XIcon className="h-4 w-4" />}
-                            {checkpointCorrect
-                              ? "Correct!"
-                              : `Not quite — the answer is ${content.videoCheckpoint.options[content.videoCheckpoint.correctIndex]}.`}
+                            {checkpointCorrect ? "Correct!" : `Not quite — the answer is ${activeCheckpoint.options[activeCheckpoint.correctIndex]}.`}
                           </p>
                           <Button type="button" className="!w-auto self-start px-6" onClick={() => setVideoState("playing")}>
                             Continue Video
@@ -570,8 +628,19 @@ export default function SessionWorkspace({
           </SectionCard>
 
           <SectionCard>
-            <p className="text-sm font-semibold text-navy-500">About this lesson</p>
+            <h3 className="text-lg font-bold text-navy-500">About this lesson</h3>
+            
+            <p className="mt-4 text-sm font-semibold text-navy-500">Learning Objective</p>
             <p className="mt-1.5 text-sm leading-relaxed text-navy-500/60">{content.objective}</p>
+
+            {content.explanation && (
+              <>
+                <p className="mt-5 text-sm font-semibold text-navy-500">Explanation</p>
+                <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-navy-500/60">
+                  {content.explanation}
+                </p>
+              </>
+            )}
 
             {content.keyConcepts.length > 0 && (
               <>
@@ -612,7 +681,6 @@ export default function SessionWorkspace({
               {(
                 [
                   { key: "practice", label: "Practice" },
-                  { key: "ai-help", label: "AI Help" },
                   { key: "exercise", label: "Exercise" },
                 ] as { key: WorkspaceView; label: string }[]
               ).map((tab) => (
@@ -630,28 +698,6 @@ export default function SessionWorkspace({
             </div>
 
             <div className="p-6 sm:p-8">
-              {workspaceView === "default" && (
-                <div>
-                  <h2 className="text-lg font-bold text-navy-500">Practice what you&apos;re learning</h2>
-                  <div className="mt-4 rounded-xl border border-slate-200 bg-brand-50/40 p-4">
-                    <p className="text-sm text-navy-500/70">{content.practice.task}</p>
-                  </div>
-                  <div className="mt-5 flex flex-wrap gap-3">
-                    <Button type="button" className="!w-auto px-6" onClick={() => setWorkspaceView("practice")}>
-                      Start Practice
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="!w-auto px-6"
-                      onClick={() => setWorkspaceView("ai-help")}
-                    >
-                      Ask AI
-                    </Button>
-                  </div>
-                </div>
-              )}
-
               {workspaceView === "practice" && (
                 <div>
                   <h2 className="text-lg font-bold text-navy-500">Practice</h2>
@@ -684,128 +730,12 @@ export default function SessionWorkspace({
                     Write and run your code above — powered by OneCompiler. Output appears in the same panel.
                   </p>
 
-                  <div className="mt-4 flex flex-wrap items-center gap-4">
-                    <Button type="button" variant="secondary" className="!w-auto px-6" onClick={() => setChecked(true)}>
-                      Self-Check
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={() => setHintVisible(true)}
-                      className="text-sm font-semibold text-brand-500 hover:text-brand-600"
-                    >
-                      AI Hint
-                    </button>
-                  </div>
-
-                  {!checked && (
-                    <p className="mt-3 text-xs text-navy-500/40">
-                      Compare your work against this reference checklist once you&apos;re done — it&apos;s a
-                      self-review guide, not an automatic grade of the code you wrote above.
-                    </p>
-                  )}
-
-                  {checked && (
-                    <div className="mt-4 flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
-                      <p className="text-xs font-medium text-navy-500/50">
-                        Reference checklist — review this yourself against your code above. It isn&apos;t an
-                        automatic evaluation of what you wrote.
-                      </p>
-                      {content.practice.checklist.map((item) => (
-                        <p
-                          key={item.label}
-                          className={`inline-flex items-center gap-1.5 text-sm font-medium ${
-                            item.passed ? "text-brand-600" : "text-error"
-                          }`}
-                        >
-                          {item.passed ? <CheckIcon className="h-4 w-4" /> : <XIcon className="h-4 w-4" />}
-                          {item.label}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-
-                  {hintVisible && (
-                    <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-navy-500/70">
-                      {content.aiHelp.replies["Give me a hint"] ?? content.aiHelp.defaultReply}
-                    </p>
-                  )}
-
                   {content.projectConnection && (
                     <p className="mt-4 flex items-start gap-1.5 text-xs text-navy-500/40">
                       <ArrowIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                       {content.projectConnection}
                     </p>
                   )}
-                </div>
-              )}
-
-              {workspaceView === "ai-help" && (
-                <div>
-                  <h2 className="text-lg font-bold text-navy-500">AI Learning Assistant</h2>
-
-                  <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-navy-500/50">
-                    <span>{courseTitle}</span>
-                    <span>&rsaquo;</span>
-                    <span>{subjectTitle}</span>
-                    <span>&rsaquo;</span>
-                    <span className="font-medium text-navy-500/70">{sessionTitle}</span>
-                  </div>
-                  {content.concepts.length > 0 && (
-                    <p className="mt-2 text-xs text-navy-500/40">Concepts: {content.concepts.join(", ")}</p>
-                  )}
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {content.aiHelp.quickPrompts.map((prompt) => (
-                      <button
-                        key={prompt}
-                        type="button"
-                        onClick={() => sendChat(prompt)}
-                        className="rounded-full border border-slate-200 px-3.5 py-1.5 text-sm font-medium text-navy-500/70 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-600"
-                      >
-                        {prompt}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="mt-4 flex max-h-64 flex-col gap-2.5 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3.5">
-                    {chat.map((m) => (
-                      <div
-                        key={m.id}
-                        className={`max-w-[85%] rounded-xl px-3.5 py-2 text-sm leading-relaxed ${
-                          m.role === "user" ? "ml-auto bg-brand-500 text-white" : "border border-slate-200 bg-white text-navy-500/80"
-                        }`}
-                      >
-                        {m.text}
-                      </div>
-                    ))}
-                  </div>
-
-                  <form
-                    className="mt-3 flex gap-2"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      sendChat(chatInput);
-                    }}
-                  >
-                    <input
-                      type="text"
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      placeholder="Ask something about this session..."
-                      className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-navy-500 placeholder:text-navy-500/35 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15"
-                    />
-                    <Button type="submit" className="shrink-0 basis-auto !w-auto px-6">
-                      Ask AI
-                    </Button>
-                  </form>
-
-                  <button
-                    type="button"
-                    onClick={() => setWorkspaceView("default")}
-                    className="mt-4 text-sm font-semibold text-brand-500 hover:text-brand-600"
-                  >
-                    &larr; Return to learning
-                  </button>
                 </div>
               )}
 
@@ -883,12 +813,20 @@ export default function SessionWorkspace({
                         Your current code will be submitted as Attempt #{submissions.length + 1}.
                       </p>
                       <p className="mt-1 text-xs text-navy-500/50">You can continue working after submission.</p>
+                      {exerciseSubmitError && (
+                        <p className="mt-3 rounded-lg bg-error/10 px-3 py-2 text-xs font-medium text-error">
+                          {exerciseSubmitError}
+                        </p>
+                      )}
                       <div className="mt-3 flex gap-3">
                         <Button
                           type="button"
                           variant="secondary"
                           className="!w-auto px-6"
-                          onClick={() => setExerciseSubmitPhase("idle")}
+                          onClick={() => {
+                            setExerciseSubmitError(null);
+                            setExerciseSubmitPhase("idle");
+                          }}
                         >
                           Cancel
                         </Button>
@@ -958,7 +896,11 @@ export default function SessionWorkspace({
                       </p>
                     )}
 
-                    <p className="mt-5 text-2xl font-bold text-brand-500">{performancePercent}%</p>
+                    {performanceScore !== null ? (
+                      <p className="mt-5 text-2xl font-bold text-brand-500">{performanceScore}%</p>
+                    ) : (
+                      <p className="mt-5 text-2xl font-bold text-navy-500/40">Not scored yet</p>
+                    )}
                     <p className="text-xs font-medium uppercase tracking-wide text-navy-500/50">Performance</p>
                   </div>
 
@@ -968,7 +910,7 @@ export default function SessionWorkspace({
                         <span className="text-navy-500/60">{req.label}</span>
                         <span className="inline-flex items-center gap-1.5 font-medium text-brand-600">
                           <CheckIcon className="h-3.5 w-3.5" />
-                          {req.key === "videoCheck" ? (checkpointCorrect ? "Correct" : "Attempted") : "Completed"}
+                          {req.key === "videoCheck" ? (videoCheckCorrect ? "Correct" : "Attempted") : "Completed"}
                         </span>
                       </div>
                     ))}
@@ -981,7 +923,7 @@ export default function SessionWorkspace({
                     </div>
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                       <p className="text-sm font-semibold text-navy-500">What to improve</p>
-                      <p className="mt-1.5 text-sm text-navy-500/60">Review the areas the practice check flagged.</p>
+                      <p className="mt-1.5 text-sm text-navy-500/60">Revisit the Video Check question if anything felt uncertain.</p>
                     </div>
                   </div>
 
@@ -1047,6 +989,99 @@ export default function SessionWorkspace({
           &larr; {backLabel}
         </Link>
       </div>
+
+      {/* Persistent "Need Help?" widget — AI Help's global contextual entry
+          point (see the file header note). Fixed-position so it stays
+          reachable while learning, practicing, or working the exercise,
+          without occupying any permanent space in the flow above. */}
+      {content.aiHelp && (
+        <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3 sm:bottom-6 sm:right-6">
+        {helpOpen && (
+          <div
+            role="dialog"
+            aria-label="Need Help"
+            className="flex max-h-[70vh] w-[calc(100vw-2.5rem)] max-w-sm flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <p className="text-sm font-semibold text-navy-500">Need Help?</p>
+              <button
+                type="button"
+                aria-label="Close help"
+                onClick={() => setHelpOpen(false)}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-navy-500/50 hover:bg-slate-50 hover:text-navy-500"
+              >
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+              <p className="text-xs text-navy-500/50">
+                {courseTitle} &rsaquo; {subjectTitle} &rsaquo; <span className="font-medium text-navy-500/70">{sessionTitle}</span>
+              </p>
+              {content.concepts.length > 0 && (
+                <p className="mt-1.5 text-xs text-navy-500/40">Concepts: {content.concepts.join(", ")}</p>
+              )}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {content.aiHelp.suggestedPrompts.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => sendChat(prompt)}
+                    className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium text-navy-500/70 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-600"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-3 flex max-h-48 flex-col gap-2.5 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
+                {chat.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
+                      m.role === "user" ? "ml-auto bg-brand-500 text-white" : "border border-slate-200 bg-white text-navy-500/80"
+                    }`}
+                  >
+                    {m.text}
+                  </div>
+                ))}
+              </div>
+
+              <form
+                className="mt-3 flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  sendChat(chatInput);
+                }}
+              >
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Ask something..."
+                  aria-label="Ask something about this session"
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-navy-500 placeholder:text-navy-500/35 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15"
+                />
+                <Button type="submit" className="shrink-0 basis-auto !w-auto px-4">
+                  Ask
+                </Button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setHelpOpen((v) => !v)}
+          aria-expanded={helpOpen}
+          className="flex items-center gap-2 rounded-full bg-brand-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-brand-600"
+        >
+          <LightbulbIcon className="h-4 w-4" />
+          Need Help?
+        </button>
+      </div>
+      )}
     </div>
   );
 }

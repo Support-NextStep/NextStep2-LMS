@@ -3,14 +3,16 @@ import { useNavigate } from "react-router-dom";
 import AuthLayout from "../components/AuthLayout";
 import FormField from "../components/FormField";
 import Button from "../components/Button";
-import { deriveContentManagerName, saveContentManagerAccount } from "../data/contentManager";
+import { loginContentAuthorAccount } from "../data/contentAuthor";
+import { ApiError } from "../data/apiClient";
 
 export default function ContentLogin() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [formError, setFormError] = useState<string | null>(null);
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const email = String(form.get("email") ?? "").trim();
@@ -22,34 +24,46 @@ export default function ContentLogin() {
     if (!password) nextErrors.password = "Password is required.";
 
     setErrors(nextErrors);
+    setFormError(null);
     if (Object.keys(nextErrors).length) return;
 
     setLoading(true);
-    // Mock internal-role auth — no real backend/credential store exists yet.
-    // First login on a fresh browser creates the local Content Manager session.
-    setTimeout(() => {
-      saveContentManagerAccount({ name: deriveContentManagerName(email), email });
-      setLoading(false);
+    // Real authentication against the backend (Phase 0) — see
+    // ../data/contentAuthor.ts. This can now genuinely fail (wrong
+    // password, not a Content Author account, or the backend being
+    // unreachable), unlike the old mock which always "succeeded."
+    try {
+      await loginContentAuthorAccount(email, password);
       navigate("/content/dashboard");
-    }, 500);
+    } catch (err) {
+      setFormError(
+        err instanceof ApiError && err.status === 401
+          ? "Invalid email or password."
+          : err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <AuthLayout
-      title="Content Manager Login"
-      subtitle="Import, validate, and review course content before it reaches students."
-      brandBadge="Content Manager"
+      title="Content Team Login"
+      subtitle="Author and prepare course content, then submit it for the Approval Team to review."
+      brandBadge="Content Team"
       brandHeading={
         <>
-          Turn prepared content into
+          Turn a session document into
           <br />
-          published learning.
+          ready-for-review content.
         </>
       }
       brandDescription={
         <>
-          Import a content package, validate it against NextStep²'s authoring structure, and keep
-          everything in Draft until it's ready for students.
+          Author a session, upload its DOCX documents, and submit it for review — the Approval Team
+          takes it from there.
         </>
       }
     >
@@ -70,6 +84,12 @@ export default function ContentLogin() {
           placeholder="Enter your password"
           error={errors.password}
         />
+
+        {formError && (
+          <p role="alert" className="text-sm font-medium text-error">
+            {formError}
+          </p>
+        )}
 
         <Button type="submit" loading={loading}>
           Log In

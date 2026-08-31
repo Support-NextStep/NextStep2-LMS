@@ -1,30 +1,36 @@
 import { test, expect } from "@playwright/test";
-import { buildContentPackageZip, buildSingleSessionPackage } from "./fixtures/buildContentPackageZip";
-import { loginAsAdmin, loginAsContentManager, importAndSetStatus } from "./fixtures/helpers";
+import { loginAsAdmin, loginAsContentAuthor, loginAsContentReviewer, authorAndSetStatus, REAL_COURSE_ID, REAL_SUBJECT_ID } from "./fixtures/helpers";
 
-const ADMIN_QA_COURSE = "admin-qa-course";
-const ADMIN_QA_SUBJECT = "admin-qa-subject";
+// The old ZIP-based fixtures could invent an entirely new, arbitrary
+// course/subject (e.g. "admin-qa-course") packaged alongside its sessions.
+// The real authoring workspace deliberately can't do that — Course/Subject
+// structure is platform-owned (see NEXTSTEP2_BACKEND_DOMAIN_MODEL.md); the
+// Content Team authors SESSIONS within an existing curated course/subject,
+// never new courses/subjects. These tests now author their QA sessions into
+// the one real curated course/subject instead, which is just as isolated:
+// each Playwright test gets a fresh browser context/localStorage, so no
+// unrelated package exists there to skew the counts being asserted.
 
 test.describe("Admin: authentication and session isolation", () => {
-  test("admin login works and the admin session is isolated from Content Manager", async ({ page }) => {
+  test("admin login works and the admin session is isolated from Content Author/Reviewer", async ({ page }) => {
     await loginAsAdmin(page, "admin@nextstep2.com");
     await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 
     const keys = await page.evaluate(() => ({
       admin: window.localStorage.getItem("nextstep2:adminAccount"),
-      contentManager: window.localStorage.getItem("nextstep2:contentManagerAccount"),
+      contentAuthor: window.localStorage.getItem("nextstep2:contentAuthorAccount"),
     }));
     expect(keys.admin).toContain("admin@nextstep2.com");
-    expect(keys.contentManager).toBeNull();
+    expect(keys.contentAuthor).toBeNull();
 
-    // Logging into Content Manager afterwards must not touch the admin key.
-    await loginAsContentManager(page, "cm@nextstep2.com");
+    // Logging into Content Author afterwards must not touch the admin key.
+    await loginAsContentAuthor(page, "author@nextstep2.com");
     const keysAfter = await page.evaluate(() => ({
       admin: window.localStorage.getItem("nextstep2:adminAccount"),
-      contentManager: window.localStorage.getItem("nextstep2:contentManagerAccount"),
+      contentAuthor: window.localStorage.getItem("nextstep2:contentAuthorAccount"),
     }));
     expect(keysAfter.admin).toContain("admin@nextstep2.com");
-    expect(keysAfter.contentManager).toContain("cm@nextstep2.com");
+    expect(keysAfter.contentAuthor).toContain("author@nextstep2.com");
   });
 
   test("admin routes reject unauthenticated users", async ({ page }) => {
@@ -50,15 +56,23 @@ test.describe("Admin: dashboard", () => {
     // Never fabricated: a fresh browser has no performance records yet.
     await expect(page.locator("text=Content Awaiting Review").locator("xpath=..").getByText("0", { exact: true })).toBeVisible();
 
-    // Create real Content Manager activity, then confirm the dashboard reflects it.
-    await loginAsContentManager(page);
-    const zip = await buildContentPackageZip(buildSingleSessionPackage(ADMIN_QA_COURSE, ADMIN_QA_SUBJECT, "dash-session", "DASHMARKER"));
-    await importAndSetStatus(page, "dash-package.zip", zip, "draft");
+    // Create real Content Author activity, then confirm the dashboard reflects it.
+    await loginAsContentAuthor(page);
+    await authorAndSetStatus(
+      page,
+      { courseId: REAL_COURSE_ID, subjectId: REAL_SUBJECT_ID, sessionTitle: "Admin Dashboard QA Session", objective: "DASHMARKER" },
+      "draft"
+    );
 
     await loginAsAdmin(page);
     await expect(page.locator("text=1 content package awaiting review")).toBeVisible();
+    // "Content package imported" is the Admin dashboard's fixed activity-log
+    // label for any new ContentPackageRecord regardless of origin (see
+    // AdminDashboard.tsx) — a pre-existing, ZIP-era piece of copy that Admin
+    // pages (frozen by the Admin MVP task) were intentionally not touched to
+    // reword in this slice; noted in the final report as a follow-up.
     await expect(page.getByText("Content package imported")).toBeVisible();
-    await expect(page.getByText("dash-package.zip")).toBeVisible();
+    await expect(page.getByText("Admin Dashboard QA Session")).toBeVisible();
   });
 });
 
@@ -126,20 +140,20 @@ test.describe("Admin: students", () => {
 
 test.describe("Admin: content", () => {
   test("content overview and course detail show correct, deduplicated status counts", async ({ page }) => {
-    await loginAsContentManager(page);
-    const zipFor = (sessionId: string, marker: string) =>
-      buildContentPackageZip(buildSingleSessionPackage(ADMIN_QA_COURSE, ADMIN_QA_SUBJECT, sessionId, marker));
+    await loginAsContentAuthor(page);
+    const author = (sessionTitle: string, objective: string, status: "draft" | "changes_requested" | "approved" | "published") =>
+      authorAndSetStatus(page, { courseId: REAL_COURSE_ID, subjectId: REAL_SUBJECT_ID, sessionTitle, objective }, status);
 
-    await importAndSetStatus(page, "qa-published.zip", await zipFor("session-published", "PUBMARK"), "published");
-    await importAndSetStatus(page, "qa-draft.zip", await zipFor("session-draft", "DRAFTMARK"), "draft");
-    await importAndSetStatus(page, "qa-changes.zip", await zipFor("session-changes", "CHGMARK"), "changes_requested");
-    await importAndSetStatus(page, "qa-approved.zip", await zipFor("session-approved", "APPMARK"), "approved");
+    await author("QA Published Session", "PUBMARK", "published");
+    await author("QA Draft Session", "DRAFTMARK", "draft");
+    await author("QA Changes Session", "CHGMARK", "changes_requested");
+    await author("QA Approved Session", "APPMARK", "approved");
 
     await loginAsAdmin(page);
     await page.goto("/admin/content");
     await expect(page.getByRole("heading", { name: "Content" })).toBeVisible();
 
-    const courseCard = page.getByText("QA Fixture Course").first().locator("xpath=ancestor::a[1]");
+    const courseCard = page.getByText("Full-Stack Web Development").first().locator("xpath=ancestor::a[1]");
     await expect(courseCard.getByText("1 subject")).toBeVisible();
     await expect(courseCard.getByText("4 sessions")).toBeVisible();
     await expect(courseCard.getByText("1 Published", { exact: true })).toBeVisible();
@@ -147,15 +161,15 @@ test.describe("Admin: content", () => {
     await expect(courseCard.getByText("1 Changes Requested", { exact: true })).toBeVisible();
     await expect(courseCard.getByText("1 Draft", { exact: true })).toBeVisible();
 
-    // No Content Manager review/approve/publish controls on the overview.
+    // No Content Reviewer review/approve/publish controls on the overview.
     await expect(page.getByRole("button", { name: "Approve Content" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Publish" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Request Changes" })).toHaveCount(0);
 
     // Drill into the course.
     await courseCard.click();
-    await expect(page).toHaveURL(new RegExp(`/admin/content/${ADMIN_QA_COURSE}`));
-    await expect(page.getByText("QA Fixture Subject")).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/admin/content/${REAL_COURSE_ID}`));
+    await expect(page.getByText("Frontend Development")).toBeVisible();
     await expect(page.getByText("Published", { exact: true })).toBeVisible();
     await expect(page.getByText("Draft", { exact: true })).toBeVisible();
     await expect(page.getByText("Changes Requested", { exact: true })).toBeVisible();
@@ -173,14 +187,20 @@ test.describe("Admin: content", () => {
 });
 
 test.describe("Admin: cross-role isolation", () => {
-  test("student and Content Manager routes never expose Admin links", async ({ page }) => {
+  test("student, Content Author, and Content Reviewer routes never expose Admin links", async ({ page }) => {
     for (const path of ["/dashboard", "/my-course"]) {
       await page.goto(path);
       await expect(page.locator('a[href^="/admin"]')).toHaveCount(0);
     }
 
-    await loginAsContentManager(page);
-    for (const path of ["/content/dashboard", "/content/import"]) {
+    await loginAsContentAuthor(page);
+    for (const path of ["/content/dashboard", `/content/courses/${REAL_COURSE_ID}`, `/content/courses/${REAL_COURSE_ID}/subjects/${REAL_SUBJECT_ID}`]) {
+      await page.goto(path);
+      await expect(page.locator('a[href^="/admin"]')).toHaveCount(0);
+    }
+
+    await loginAsContentReviewer(page);
+    for (const path of ["/review/dashboard", "/review/pending", "/review/changes-requested", "/review/approved", "/review/published"]) {
       await page.goto(path);
       await expect(page.locator('a[href^="/admin"]')).toHaveCount(0);
     }

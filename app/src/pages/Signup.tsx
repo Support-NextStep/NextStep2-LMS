@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import AuthLayout from "../components/AuthLayout";
 import FormField from "../components/FormField";
 import Button from "../components/Button";
+import { registerRequest } from "../data/auth";
+import { ApiError } from "../data/apiClient";
 
 type Errors = {
   fullName?: string;
@@ -16,8 +18,9 @@ export default function Signup() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
+  const [formError, setFormError] = useState<string | null>(null);
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const fullName = String(form.get("fullName") ?? "").trim();
@@ -36,14 +39,30 @@ export default function Signup() {
     if (!terms) nextErrors.terms = "Please acknowledge the Terms and Privacy Policy.";
 
     setErrors(nextErrors);
+    setFormError(null);
     if (Object.keys(nextErrors).length) return;
 
     setLoading(true);
-    // Mock signup — replace with real API call later.
-    setTimeout(() => {
-      setLoading(false);
+    // Real registration against the backend (Phase 0) — see
+    // ../data/auth.ts. Always creates a `STUDENT` account server-side; the
+    // request has no way to ask for any other role. Still navigates to
+    // /verify-email afterward, exactly as before — that screen remains a
+    // decorative placeholder (see NEXTSTEP2_BACKEND_DOMAIN_MODEL.md §1);
+    // this change only makes the account itself real.
+    try {
+      await registerRequest(email, password, fullName);
       navigate("/verify-email", { state: { email } });
-    }, 700);
+    } catch (err) {
+      setFormError(
+        err instanceof ApiError && err.status === 403
+          ? "An account with this email already exists."
+          : err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -113,6 +132,12 @@ export default function Signup() {
           </label>
           {errors.terms && <p className="mt-1.5 text-sm text-error">{errors.terms}</p>}
         </div>
+
+        {formError && (
+          <p role="alert" className="text-sm font-medium text-error">
+            {formError}
+          </p>
+        )}
 
         <Button type="submit" loading={loading}>
           Create Account

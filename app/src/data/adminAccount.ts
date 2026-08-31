@@ -1,60 +1,37 @@
 // ---------------------------------------------------------------------------
 // Admin account.
 //
-// Entirely separate from the Student, Company, and Content Manager domains —
-// isolated the same way contentManager.ts is isolated: its own localStorage
-// key, its own type, no shared state with ProgressProvider or any other
-// role's account storage.
-//
-// This is a prototype-only mock auth (no real backend, no password
-// hashing/verification) — first login on a fresh browser just creates the
-// account. Matches the existing project's established pattern for auth-less
-// internal-role login (see contentManager.ts).
+// Phase 0: backed by real authentication against the backend (see
+// NEXTSTEP2_BACKEND_ARCHITECTURE_AND_TECHNOLOGY_SELECTION.md Part 11) —
+// previously a prototype-only mock: any email/password created a local
+// account with no verification of any kind (see
+// NEXTSTEP2_FRONTEND_BACKEND_DATA_CONTRACT_AUDIT.md's cross-cutting
+// finding). The session now lives entirely in httpOnly cookies the backend
+// manages; this file never stores anything itself — every function here is
+// a thin, role-scoped wrapper over ../data/auth.ts.
 // ---------------------------------------------------------------------------
+import { fetchCurrentUser, loginRequest, logoutRequest, type AuthUser } from "./auth";
 
-export type AdminAccount = {
-  name: string;
-  email: string;
-};
+export type AdminAccount = { name: string; email: string };
 
-const ACCOUNT_KEY = "nextstep2:adminAccount";
-
-export function loadAdminAccount(): AdminAccount | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(ACCOUNT_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as AdminAccount;
-  } catch {
-    return null;
-  }
+function toAdminAccount(user: AuthUser): AdminAccount | null {
+  return user.role === "ADMIN" ? { name: user.name, email: user.email } : null;
 }
 
-export function saveAdminAccount(account: AdminAccount) {
-  try {
-    window.localStorage.setItem(ACCOUNT_KEY, JSON.stringify(account));
-  } catch {
-    // Ignore write failures (e.g. private browsing) — the mock session just won't persist.
-  }
+/** Fresh check against the backend session on every call — null if not logged in, logged in as a different role, or the backend is unreachable. */
+export async function loadAdminAccount(): Promise<AdminAccount | null> {
+  const user = await fetchCurrentUser();
+  return user ? toAdminAccount(user) : null;
 }
 
-export function clearAdminAccount() {
-  try {
-    window.localStorage.removeItem(ACCOUNT_KEY);
-  } catch {
-    // Ignore.
-  }
+/** Real credential verification. Throws (see ../data/apiClient.ts's ApiError) on invalid credentials or an unreachable backend — the login page must catch this and show a real error now that login can genuinely fail. */
+export async function loginAdminAccount(email: string, password: string): Promise<AdminAccount> {
+  const user = await loginRequest(email, password);
+  const account = toAdminAccount(user);
+  if (!account) throw new Error("This account is not an Admin account.");
+  return account;
 }
 
-function nameFromEmail(email: string): string {
-  const local = email.split("@")[0] ?? email;
-  return local
-    .split(/[._-]/)
-    .filter(Boolean)
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-export function deriveAdminName(email: string): string {
-  return nameFromEmail(email) || "Admin";
+export async function clearAdminAccount(): Promise<void> {
+  await logoutRequest();
 }

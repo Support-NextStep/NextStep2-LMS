@@ -1,21 +1,25 @@
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import AdminLayout from "../components/AdminLayout";
 import BackLink from "../components/BackLink";
 import { useRequireAdminAccount } from "../hooks/useRequireAdminAccount";
-import { resolveSessionStatuses, type SessionStatusInfo } from "../data/publishedContent";
+import { listReviewQueue } from "../data/contentReviewApi";
+import { listCourses, listSubjectSummaries, listSessionSummaries } from "../data/mock";
+import type { BackendPackageStatus, PackageSummary } from "../data/authoredSessionApi";
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-const STATUS_BADGE: Record<SessionStatusInfo["status"], { label: string; className: string }> = {
-  draft: { label: "Draft", className: "bg-slate-100 text-navy-500/60" },
-  changes_requested: { label: "Changes Requested", className: "bg-amber-100 text-amber-700" },
-  approved: { label: "Approved", className: "bg-emerald-100 text-emerald-700" },
-  published: { label: "Published", className: "bg-brand-100 text-brand-700" },
+const STATUS_BADGE: Record<BackendPackageStatus, { label: string; className: string }> = {
+  DRAFT: { label: "Draft", className: "bg-slate-100 text-navy-500/60" },
+  READY_FOR_REVIEW: { label: "Pending Review", className: "bg-slate-100 text-navy-500/60" },
+  CHANGES_REQUESTED: { label: "Changes Requested", className: "bg-amber-100 text-amber-700" },
+  APPROVED: { label: "Approved", className: "bg-emerald-100 text-emerald-700" },
+  PUBLISHED: { label: "Published", className: "bg-brand-100 text-brand-700" },
 };
 
-function StatusBadge({ status }: { status: SessionStatusInfo["status"] }) {
+function StatusBadge({ status }: { status: BackendPackageStatus }) {
   const badge = STATUS_BADGE[status];
   return (
     <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${badge.className}`}>
@@ -24,23 +28,35 @@ function StatusBadge({ status }: { status: SessionStatusInfo["status"] }) {
   );
 }
 
-const STATUS_TIMESTAMP_LABEL: Record<SessionStatusInfo["status"], string> = {
-  draft: "Imported",
-  changes_requested: "Reviewed",
-  approved: "Approved",
-  published: "Published",
-};
+type SessionRow = { sessionId: string; sessionTitle: string; sessionDescription: string; status: BackendPackageStatus; statusAt: string };
+type SubjectGroup = { subjectId: string; subjectTitle: string; sessions: SessionRow[] };
 
 export default function AdminContentDetail() {
   const { account, checked } = useRequireAdminAccount();
   const { courseId = "" } = useParams<{ courseId: string }>();
+  const [packages, setPackages] = useState<PackageSummary[] | null>(null);
 
-  if (!checked || !account) return null;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const all = await listReviewQueue("ALL");
+        if (!cancelled) setPackages(all);
+      } catch {
+        if (!cancelled) setPackages([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const allSessions = resolveSessionStatuses();
-  const courseSessions = allSessions.filter((s) => s.courseId === courseId);
+  if (!checked || !account || packages === null) return null;
 
-  if (courseSessions.length === 0) {
+  const courseTitle = listCourses().find((c) => c.id === courseId)?.title ?? courseId;
+  const coursePackages = packages.filter((p) => p.courseId === courseId);
+
+  if (coursePackages.length === 0) {
     return (
       <AdminLayout adminName={account.name}>
         <div className="mx-auto max-w-2xl py-8 text-center">
@@ -53,21 +69,29 @@ export default function AdminContentDetail() {
     );
   }
 
-  const courseTitle = courseSessions[0].courseTitle;
-
-  const subjectMap = new Map<string, { subjectId: string; subjectTitle: string; subjectOrder: number; sessions: SessionStatusInfo[] }>();
-  for (const s of courseSessions) {
-    const existing = subjectMap.get(s.subjectId);
+  const subjectMap = new Map<string, SubjectGroup>();
+  for (const p of coursePackages) {
+    const knownSession = listSessionSummaries(p.subjectId).find((s) => s.id === p.sessionId);
+    const row: SessionRow = {
+      sessionId: p.sessionId,
+      sessionTitle: knownSession?.title ?? p.fileName,
+      sessionDescription: knownSession?.description ?? "",
+      status: p.status,
+      statusAt: p.updatedAt,
+    };
+    const existing = subjectMap.get(p.subjectId);
     if (existing) {
-      existing.sessions.push(s);
+      existing.sessions.push(row);
     } else {
-      subjectMap.set(s.subjectId, { subjectId: s.subjectId, subjectTitle: s.subjectTitle, subjectOrder: s.subjectOrder, sessions: [s] });
+      const subjectTitle = listSubjectSummaries().find((s) => s.id === p.subjectId)?.title ?? p.subjectId;
+      subjectMap.set(p.subjectId, { subjectId: p.subjectId, subjectTitle, sessions: [row] });
     }
   }
-  const subjects = [...subjectMap.values()].sort((a, b) => a.subjectOrder - b.subjectOrder);
+  const subjects = [...subjectMap.values()].sort((a, b) => a.subjectTitle.localeCompare(b.subjectTitle));
   for (const subject of subjects) {
-    subject.sessions.sort((a, b) => a.sessionOrder - b.sessionOrder);
+    subject.sessions.sort((a, b) => a.sessionTitle.localeCompare(b.sessionTitle));
   }
+  const totalSessions = coursePackages.length;
 
   return (
     <AdminLayout adminName={account.name}>
@@ -76,8 +100,8 @@ export default function AdminContentDetail() {
 
         <h1 className="mt-4 text-2xl font-bold tracking-tight text-navy-500">{courseTitle}</h1>
         <p className="mt-1.5 text-sm text-navy-500/60">
-          {subjects.length} subject{subjects.length === 1 ? "" : "s"} &middot; {courseSessions.length} session
-          {courseSessions.length === 1 ? "" : "s"} &middot; read-only
+          {subjects.length} subject{subjects.length === 1 ? "" : "s"} &middot; {totalSessions} session
+          {totalSessions === 1 ? "" : "s"} &middot; read-only
         </p>
 
         <div className="mt-8 flex flex-col gap-6">
@@ -96,9 +120,7 @@ export default function AdminContentDetail() {
                       <p className="truncate text-xs text-navy-500/50">{session.sessionDescription}</p>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
-                      <span className="text-xs text-navy-500/40">
-                        {STATUS_TIMESTAMP_LABEL[session.status]} {formatDate(session.statusAt)}
-                      </span>
+                      <span className="text-xs text-navy-500/40">Last updated {formatDate(session.statusAt)}</span>
                       <StatusBadge status={session.status} />
                     </div>
                   </div>

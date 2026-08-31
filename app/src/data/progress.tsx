@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   getCourseProgress,
   getCurrentSessionContext,
@@ -6,6 +6,7 @@ import {
   getSessionContext,
   getSubjectDetail,
   getSubjects,
+  refreshCourseCatalogFromBackend,
   type Subject,
   type SubjectDetail,
 } from "./mock";
@@ -74,6 +75,24 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   const [completedSessionIds, setCompletedSessionIds] = useState<Set<string>>(loadCompletedSessionIds);
   const [performanceRecords, setPerformanceRecords] =
     useState<Record<string, SessionPerformanceRecord>>(loadPerformanceRecords);
+  // Only used to force one re-render once the real catalog loads (Phase 0) —
+  // never read anywhere itself. mock.ts's refreshCourseCatalogFromBackend()
+  // mutates COURSE/SUBJECTS_BASE/SUBJECT_SESSIONS in place, so every
+  // consumer of useCourseData() picks up the change automatically the
+  // moment this provider (and therefore useCourseData()'s memo, whose other
+  // deps are freshly-created on every render regardless) re-renders — see
+  // NEXTSTEP2_BACKEND_ARCHITECTURE_AND_TECHNOLOGY_SELECTION.md Part 5/15.
+  const [, forceRerenderAfterCatalogLoad] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    refreshCourseCatalogFromBackend().then((changed) => {
+      if (!cancelled && changed) forceRerenderAfterCatalogLoad((v) => v + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function completeSession(sessionId: string) {
     setCompletedSessionIds((prev) => {

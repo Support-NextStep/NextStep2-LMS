@@ -12,9 +12,18 @@
 // Of the four tracked session activities:
 //   - Learning   → completion only (watching a video has no "score")
 //   - Video Check → has a real result (the student's answer is right or wrong)
-//   - Practice   → has a real result (the mock checklist's pass/fail count)
+//   - Practice   → completion only. Self-Check (the only thing that ever
+//                  produced a pass/fail count) was retired from the active
+//                  product contract — see
+//                  NEXTSTEP2_FRONTEND_BACKEND_DATA_CONTRACT_AUDIT.md's
+//                  cleanup pass — so Practice can never contribute a score.
 //   - Exercise   → completion only (no checker exists for it yet)
 // AI Help is intentionally absent — it is not a scored activity.
+//
+// This is also the SINGLE source of truth for session scoring — both the
+// on-screen Complete-screen percentage (SessionWorkspace.tsx) and the
+// persisted SessionPerformanceRecord call calculateSessionScore() below with
+// the same activities object, so the two numbers can never disagree.
 //
 // Session/Subject/Course performance are pure functions over these records,
 // so the eventual Performance page can call them directly without touching
@@ -24,7 +33,7 @@
 export type SessionActivitiesInput = {
   learning: { completed: boolean };
   videoCheck: { completed: boolean; correct: boolean | null };
-  practice: { completed: boolean; passedCount: number; totalCount: number };
+  practice: { completed: boolean };
   exercise: { completed: boolean };
 };
 
@@ -59,19 +68,18 @@ function average(values: number[]): number | null {
 
 /**
  * Session performance score — derived ONLY from activities that have a real
- * result (Video Check correctness, Practice checklist pass rate). Learning
- * and Exercise are completion-only and never factor into the score. Returns
- * null if nothing scoreable was completed, rather than fabricating a number.
+ * result. Today that's Video Check correctness alone: Learning and Exercise
+ * are completion-only, and Practice no longer produces any result at all
+ * (Self-Check was retired — see the file header). Returns null if nothing
+ * scoreable was completed, rather than fabricating a number. Kept as an
+ * averaged `scores[]` (not a single `if`) so a future scoreable activity is
+ * an additive change here, not a reshape.
  */
 export function calculateSessionScore(activities: SessionActivitiesInput): number | null {
   const scores: number[] = [];
 
   if (activities.videoCheck.completed && activities.videoCheck.correct !== null) {
     scores.push(activities.videoCheck.correct ? 100 : 0);
-  }
-
-  if (activities.practice.completed && activities.practice.totalCount > 0) {
-    scores.push(Math.round((activities.practice.passedCount / activities.practice.totalCount) * 100));
   }
 
   return average(scores);

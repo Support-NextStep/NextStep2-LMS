@@ -1,10 +1,11 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AdminLayout from "../components/AdminLayout";
 import { useRequireAdminAccount } from "../hooks/useRequireAdminAccount";
 import { useCourseData } from "../data/progress";
 import { getAllStudentIds } from "../data/adminStudents";
-import { loadContentPackages } from "../data/contentPackages";
-import { resolveSessionStatuses } from "../data/publishedContent";
+import { listReviewQueue } from "../data/contentReviewApi";
+import type { PackageSummary } from "../data/authoredSessionApi";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -29,11 +30,24 @@ type ActivityItem = { at: string; label: string; detail?: string };
 export default function AdminDashboard() {
   const { account, checked } = useRequireAdminAccount();
   const { performanceRecords, getSessionContext } = useCourseData();
+  const [packages, setPackages] = useState<PackageSummary[] | null>(null);
 
-  if (!checked || !account) return null;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const all = await listReviewQueue("ALL");
+        if (!cancelled) setPackages(all);
+      } catch {
+        if (!cancelled) setPackages([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const packages = loadContentPackages();
-  const sessionStatuses = resolveSessionStatuses();
+  if (!checked || !account || packages === null) return null;
 
   // ---- Dashboard metrics — every number below is derived from real prototype data, never fabricated. ----
   const studentsCount = getAllStudentIds().length;
@@ -44,23 +58,29 @@ export default function AdminDashboard() {
   // This prototype has exactly one real course (COURSE in mock.ts) — the
   // student experience isn't structured around multiple courses yet. See
   // Content Overview for the (possibly larger) set of courseIds that appear
-  // across imported content packages.
+  // across submitted content packages.
   const coursesCount = 1;
-  const publishedSessionsCount = sessionStatuses.filter((s) => s.status === "published").length;
-  const draftPackageCount = packages.filter((p) => p.status === "draft").length;
-  const changesRequestedPackageCount = packages.filter((p) => p.status === "changes_requested").length;
+  const publishedSessionsCount = packages.filter((p) => p.status === "PUBLISHED").length;
+  const draftPackageCount = packages.filter((p) => p.status === "READY_FOR_REVIEW").length;
+  const changesRequestedPackageCount = packages.filter((p) => p.status === "CHANGES_REQUESTED").length;
 
-  // ---- Recent activity — derived directly from existing timestamps already stored by the Student and Content Manager flows. ----
+  // ---- Recent activity — derived from each package's own last-updated
+  // timestamp. Doesn't distinguish "submitted" vs "approved" vs "published"
+  // as separate historical events the way the old single mutable `review`
+  // object's distinct approvedAt/publishedAt/reviewedAt fields could — the
+  // full per-event trail now lives in ContentReview, viewable per package on
+  // its own detail page; this dashboard's feed uses one row per package,
+  // labeled by its current status. ----
   const activity: ActivityItem[] = [];
+  const ACTIVITY_LABEL: Record<PackageSummary["status"], string> = {
+    DRAFT: "Content package drafted",
+    READY_FOR_REVIEW: "Content package submitted for review",
+    CHANGES_REQUESTED: "Content package sent back with changes requested",
+    APPROVED: "Content package approved",
+    PUBLISHED: "Content package published",
+  };
   for (const pkg of packages) {
-    activity.push({ at: pkg.importedAt, label: "Content package imported", detail: pkg.fileName });
-    if (pkg.review?.publishedAt) {
-      activity.push({ at: pkg.review.publishedAt, label: "Content package published", detail: pkg.fileName });
-    } else if (pkg.review?.approvedAt) {
-      activity.push({ at: pkg.review.approvedAt, label: "Content package approved", detail: pkg.fileName });
-    } else if (pkg.status === "changes_requested" && pkg.review?.reviewedAt) {
-      activity.push({ at: pkg.review.reviewedAt, label: "Content package sent back with changes requested", detail: pkg.fileName });
-    }
+    activity.push({ at: pkg.updatedAt, label: ACTIVITY_LABEL[pkg.status], detail: pkg.fileName });
   }
   for (const record of performanceRecords) {
     const context = getSessionContext(record.sessionId);
