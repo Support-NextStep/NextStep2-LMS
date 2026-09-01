@@ -1,0 +1,10 @@
+import { readFileSync } from "node:fs";
+import { Session } from "./lib.mjs";
+const pool = JSON.parse(readFileSync("./_loadtest_scratch/pool.json", "utf8"));
+const acc = pool[41];
+const s = new Session();
+await s.post("/auth/login", { email: acc.email, password: acc.password });
+await s.post("/sessions/stack-implementation/activity-progress/learning/complete", {});
+await s.post("/sessions/stack-implementation/activity-progress/practice/complete", {});
+const res = await s.post("/sessions/stack-implementation/progress/complete", {});
+console.log(res.status, JSON.stringify(res.json));

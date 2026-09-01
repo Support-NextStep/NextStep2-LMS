@@ -5,6 +5,7 @@ import PracticeCodeEmbed from "./PracticeCodeEmbed";
 import ExerciseCodeEmbed from "./ExerciseCodeEmbed";
 import VideoCheckpointPlayer from "./VideoCheckpointPlayer";
 import { getPracticeLanguageLabel, type CodeFile } from "../data/practiceExecution";
+import type { CriterionResult, EvaluationDetail } from "../data/exerciseSubmissionsApi";
 import {
   getLiveSessionState,
   type ActivityKey,
@@ -13,6 +14,8 @@ import {
   type SessionDelivery,
 } from "../data/sessionContent";
 import { calculateSessionScore, type SessionActivitiesInput } from "../data/performance";
+import { ApiError } from "../data/apiClient";
+import type { TrackedActivityKey } from "../data/activityProgressApi";
 
 // ---------------------------------------------------------------------------
 // The actual Session Workspace UI — Learn / Video Check / Practice / Exercise
@@ -49,7 +52,12 @@ const ACTIVITY_LABEL: Record<ActivityKey, string> = {
   exercise: "Exercise",
 };
 
-export type SubmissionSummary = { id: string; attemptNumber: number; submittedAt: string };
+export type SubmissionSummary = {
+  id: string;
+  attemptNumber: number;
+  submittedAt: string;
+  evaluation?: { status: EvaluationDetail["status"]; overallScore: number | null } | null;
+};
 
 export type SessionWorkspaceProps = {
   mode: "student" | "preview";
@@ -65,8 +73,47 @@ export type SessionWorkspaceProps = {
   nextSessionId?: string;
   greetingName: string;
   initialSubmissions: SubmissionSummary[];
-  onCompleteSession: (activities: SessionActivitiesInput) => void;
+  /**
+   * Server-Side Session Activity Progress slice — every Learning/Video
+   * Check/Practice activity this student has already completed for this
+   * session, per the real backend (see SessionPage.tsx). Restores
+   * learningDone/videoCheckDone/practiceViewed's "done" state after a
+   * refresh/logout-login/new device — see the sync effect below. Preview
+   * never has any (always []), since nothing it does is persisted.
+   */
+  initialActivityProgress: TrackedActivityKey[];
+  /**
+   * Student Session Completion Persistence slice — this now calls the real
+   * backend (see SessionPage.tsx) and its returned Promise only resolves
+   * once completion is durably recorded server-side; it rejects (never
+   * resolves) on a network failure or a backend-side rejection. See
+   * handleCompleteSession below for how a rejection surfaces to the student.
+   */
+  onCompleteSession: (activities: SessionActivitiesInput) => Promise<void>;
+  /**
+   * Server-Side Session Activity Progress slice — persists one activity's
+   * completion to the real backend (see SessionPage.tsx). Fired at most once
+   * per activity per session mount, the moment that activity's existing,
+   * unchanged local completion signal first becomes true (see the
+   * persistence-triggering effects below) — never on a timer, never
+   * per-tick during video playback. `answeredCheckpointIds` is only
+   * meaningful for activityType="videoCheck". Failures are swallowed here
+   * (fire-and-forget, matching this being a non-terminal, cosmetic signal —
+   * unlike Complete Session, nothing in this component blocks or shows an
+   * error on a failed activity-progress call; the worst case is simply that
+   * a later Complete Session attempt correctly still sees it as incomplete).
+   */
+  onCompleteActivity: (activityType: TrackedActivityKey, payload?: { answeredCheckpointIds?: string[] }) => Promise<void>;
   onSubmitExercise: (files: CodeFile[], language: string) => Promise<SubmissionSummary>;
+  /**
+   * Student Exercise Evaluation UI — fetches one attempt's full result
+   * (score/criteria/strengths/improvements/feedback). Only ever called for
+   * a submission whose list entry already carries a truthy `evaluation`
+   * (i.e. mode="student" — see the reset/poll effect below); the preview
+   * wrapper's submissions never do, so this is never invoked there and can
+   * safely be a stub.
+   */
+  onFetchEvaluation: (submissionId: string) => Promise<EvaluationDetail>;
   backHref: string;
   backLabel: string;
   getNextSessionHref: (nextSessionId: string) => string;
@@ -75,6 +122,10 @@ export type SessionWorkspaceProps = {
   /** Rendered above the workspace — used by preview for the DRAFT banner. Never used by the student wrapper. */
   bannerSlot?: ReactNode;
 };
+
+/** Bounded polling while the latest attempt is PENDING/EVALUATING — a few seconds apart, stopping the moment a terminal status (EVALUATED/FAILED) is seen, and never running past MAX_EVALUATION_POLL_ATTEMPTS even if something is stuck server-side. */
+const EVALUATION_POLL_INTERVAL_MS = 4000;
+const MAX_EVALUATION_POLL_ATTEMPTS = 75; // ~5 minutes at the interval above
 
 type ChatMessage = { id: number; role: "user" | "ai"; text: string };
 type VideoState = "idle" | "playing" | "checkpoint" | "answered" | "finished";
@@ -109,6 +160,178 @@ function ArrowIcon({ className }: { className?: string }) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className={className}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
     </svg>
+  );
+}
+
+function Spinner({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={`animate-spin ${className}`} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+/**
+ * Student Exercise Evaluation UI — one row per authored evaluation
+ * criterion, exactly as returned by the evaluator (never modified or
+ * reworded). Passed/failed is signaled by icon + label text as well as
+ * color, never color alone.
+ */
+function CriterionRow({ criterion }: { criterion: CriterionResult }) {
+  return (
+    <li className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-medium text-navy-500">{criterion.criterion}</p>
+        <span className="shrink-0 text-xs font-semibold text-navy-500/60">{criterion.score}/100</span>
+      </div>
+      <p
+        className={`mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold ${
+          criterion.passed ? "text-brand-600" : "text-error"
+        }`}
+      >
+        {criterion.passed ? <CheckIcon className="h-3.5 w-3.5" /> : <XIcon className="h-3.5 w-3.5" />}
+        {criterion.passed ? "Passed" : "Needs improvement"}
+      </p>
+      {criterion.feedback && <p className="mt-1.5 text-xs leading-relaxed text-navy-500/60">{criterion.feedback}</p>}
+    </li>
+  );
+}
+
+/** The lightweight per-attempt status shown in "Exercise Attempts" — uses only the list endpoint's {status, overallScore}, never the full detail fetch (that's only fetched for the current/latest attempt — see the polling effect). */
+function AttemptStatusBadge({ evaluation }: { evaluation: SubmissionSummary["evaluation"] }) {
+  if (!evaluation) return <span className="text-xs font-medium text-navy-500/40">Submitted</span>;
+  switch (evaluation.status) {
+    case "PENDING":
+      return <span className="text-xs font-medium text-navy-500/50">Queued</span>;
+    case "EVALUATING":
+      return <span className="text-xs font-medium text-navy-500/50">Evaluating&hellip;</span>;
+    case "EVALUATED":
+      return (
+        <span className="inline-flex items-center gap-2">
+          <span className="text-sm font-semibold text-navy-500">{evaluation.overallScore ?? 0}/100</span>
+          <span className="text-xs font-medium text-navy-500/40">Evaluated</span>
+        </span>
+      );
+    case "FAILED":
+      return <span className="text-xs font-medium text-error">Not evaluated</span>;
+  }
+}
+
+/**
+ * The full result for the current/latest attempt — the one place all of
+ * PENDING/EVALUATING/EVALUATED/FAILED are rendered for a student. Never
+ * shows provider/internal details (no failureReason text, no AI provider
+ * name) — see EvaluationDetail's own doc comment for what's deliberately
+ * not even fetched.
+ */
+function EvaluationStateBody({ detail, fallbackStatus }: { detail: EvaluationDetail | null; fallbackStatus: EvaluationDetail["status"] }) {
+  const status = detail?.status ?? fallbackStatus;
+
+  if (status === "PENDING") {
+    return (
+      <div className="flex items-center gap-3">
+        <Spinner className="h-5 w-5 text-navy-500/40" />
+        <div>
+          <p className="text-sm font-semibold text-navy-500">Evaluation queued</p>
+          <p className="text-xs text-navy-500/50">Your submission has been received and is waiting to be evaluated.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "EVALUATING") {
+    return (
+      <div className="flex items-center gap-3">
+        <Spinner className="h-5 w-5 text-brand-500" />
+        <p className="text-sm font-semibold text-navy-500">Evaluating your submission&hellip;</p>
+      </div>
+    );
+  }
+
+  if (status === "FAILED") {
+    return (
+      <div>
+        <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-error">
+          <XIcon className="h-4 w-4" />
+          Evaluation could not be completed.
+        </p>
+        <p className="mt-1.5 text-xs text-navy-500/50">You can submit another attempt.</p>
+      </div>
+    );
+  }
+
+  // status === "EVALUATED" — detail may still be loading for a brief moment
+  // right after a page reload, OR right after the student selects a
+  // different (already-evaluated) attempt in "Exercise Attempts" — the list
+  // already knows the status before the fresh per-attempt detail fetch
+  // resolves. Show a quiet loading state rather than nothing, a crash, or
+  // (critically) the PREVIOUSLY selected attempt's score/criteria.
+  if (!detail) {
+    return (
+      <div className="flex items-center gap-3 text-navy-500/40">
+        <Spinner className="h-4 w-4" />
+        <p className="text-sm">Loading evaluation&hellip;</p>
+      </div>
+    );
+  }
+
+  const criteria = detail.criteriaResults ?? [];
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex items-baseline gap-1.5">
+        <p className="text-3xl font-bold text-navy-500">{detail.overallScore ?? 0}</p>
+        <p className="text-sm font-medium text-navy-500/40">/ 100</p>
+      </div>
+
+      {criteria.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-navy-500/40">Criteria</p>
+          <ul className="mt-2 flex flex-col gap-2">
+            {criteria.map((c, i) => (
+              <CriterionRow key={`${i}-${c.criterion}`} criterion={c} />
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {detail.strengths.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-navy-500/40">What you did well</p>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {detail.strengths.map((item, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm text-navy-500/70">
+                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-brand-500" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {detail.improvements.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-navy-500/40">What to improve</p>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {detail.improvements.map((item, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm text-navy-500/70">
+                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {detail.feedback && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-navy-500/40">Feedback</p>
+          <p className="mt-1.5 whitespace-pre-line break-words text-sm leading-relaxed text-navy-500/70">{detail.feedback}</p>
+        </div>
+      )}
+
+      <p className="text-xs text-navy-500/40">Evaluation generated with AI based on the exercise criteria.</p>
+    </div>
   );
 }
 
@@ -246,8 +469,11 @@ export default function SessionWorkspace({
   nextSessionId,
   greetingName,
   initialSubmissions,
+  initialActivityProgress,
   onCompleteSession,
+  onCompleteActivity,
   onSubmitExercise,
+  onFetchEvaluation,
   backHref,
   backLabel,
   getNextSessionHref,
@@ -290,15 +516,60 @@ export default function SessionWorkspace({
   // pre-tab default view, or the completion screen) is currently showing.
   const [helpOpen, setHelpOpen] = useState(false);
 
-  const [exerciseSubmitted, setExerciseSubmitted] = useState(false);
+  // Student Session Completion Persistence slice — tracks the in-flight
+  // backend call handleCompleteSession() below makes. completeSessionError
+  // is shown next to the Complete Session button (same treatment as
+  // exerciseSubmitError) rather than ever showing the completion screen for
+  // a completion the backend didn't actually accept.
+  const [completingSession, setCompletingSession] = useState(false);
+  const [completeSessionError, setCompleteSessionError] = useState<string | null>(null);
+
   const [exerciseFiles, setExerciseFiles] = useState<CodeFile[]>([]);
-  const [exerciseSubmitPhase, setExerciseSubmitPhase] = useState<"idle" | "confirming" | "success">("idle");
+  const [exerciseSubmitPhase, setExerciseSubmitPhase] = useState<"idle" | "confirming">("idle");
   const [exerciseSubmitError, setExerciseSubmitError] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionSummary[]>(initialSubmissions);
-  const [lastSubmission, setLastSubmission] = useState<SubmissionSummary | null>(null);
+  // The Exercise required-activity is "has the student successfully
+  // submitted at least one attempt" — nothing about evaluation status.
+  // Derived straight from `submissions` (the same backend-persisted history
+  // the Exercise Attempts list renders) rather than a separate ephemeral
+  // flag, so it's correct immediately after a fresh submit (setSubmissions
+  // above), correct on first load once initialSubmissions arrives (the sync
+  // effect below updates `submissions`), and correct after any
+  // remount/refresh/navigation-away-and-back — all from one source of
+  // truth, with no window where it can fall out of sync with what the
+  // Attempts list itself shows. Deliberately independent of `evaluation`/
+  // its status (PENDING/EVALUATING/EVALUATED/FAILED all count) — see
+  // activityDone below.
+  const exerciseSubmitted = submissions.length > 0;
+  // Which attempt's evaluation is currently being viewed — distinct from
+  // "the latest attempt": defaults to latest on load/after a fresh submit,
+  // but a student can click any past attempt to view its own evaluation
+  // without that selection being silently overridden back to latest (the
+  // bug this state was introduced to fix — see the attempt-list buttons
+  // below, and handleConfirmExerciseSubmit()). `null` means "not decided
+  // yet" (before submissions has loaded) or "no submissions exist."
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState<string | null>(null);
+  // The full result (score/criteria/strengths/improvements/feedback) for
+  // whichever attempt is currently SELECTED (not necessarily the latest —
+  // see selectedSubmissionId above); fetched/polled by the effect below.
+  // Previous attempts' lightweight {status, overallScore} still live on
+  // `submissions` itself (AttemptStatusBadge) — never overwritten by
+  // another attempt's evaluation, since each is keyed by its own
+  // submission id and this detail is always refetched fresh on selection.
+  const [evaluationDetail, setEvaluationDetail] = useState<EvaluationDetail | null>(null);
 
   const [liveJoined, setLiveJoined] = useState(false);
   const [attended, setAttended] = useState(false);
+
+  // Server-Side Session Activity Progress slice — Learning/Video Check/
+  // Practice activities this student has ALREADY completed for this
+  // session, per the real backend (initialActivityProgress, fetched by
+  // SessionPage.tsx). ORed into learningDone/videoCheckDone/practiceDone
+  // below alongside the existing, unchanged local-interaction-derived
+  // signals — this is what makes "already completed" survive a refresh,
+  // exactly mirroring the same pattern `exerciseSubmitted` already uses for
+  // Exercise (submissions.length > 0, backend-sourced + locally-appended).
+  const [persistedActivities, setPersistedActivities] = useState<Set<TrackedActivityKey>>(new Set());
 
   // Reset all local workspace state whenever a different session is opened.
   useEffect(() => {
@@ -312,16 +583,30 @@ export default function SessionWorkspace({
     setChatInput("");
     setHelpOpen(false);
     setPracticeViewed(false);
-    setExerciseSubmitted(false);
+    setCompletingSession(false);
+    setCompleteSessionError(null);
     setExerciseFiles([]);
     setExerciseSubmitPhase("idle");
     setExerciseSubmitError(null);
-    setLastSubmission(null);
     setSubmissions(initialSubmissions);
+    setSelectedSubmissionId(null);
+    setEvaluationDetail(null);
     setLiveJoined(false);
     setAttended(false);
+    setPersistedActivities(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  // initialActivityProgress arrives from a real backend fetch (SessionPage.tsx),
+  // which resolves *after* this component's first render for the session —
+  // same timing story as initialSubmissions just below. Safe to just
+  // overwrite `persistedActivities` wholesale on every change: this array's
+  // reference only changes on a real session change or the parent's own
+  // fetch resolving, never as a side effect of anything in this component.
+  useEffect(() => {
+    setPersistedActivities(new Set(initialActivityProgress));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialActivityProgress]);
 
   // initialSubmissions now arrives from a real backend fetch (SessionPage.tsx),
   // which resolves *after* this component's first render for the session —
@@ -330,10 +615,77 @@ export default function SessionWorkspace({
   // fetched array. Safe against clobbering an optimistic local append (see
   // handleConfirmExerciseSubmit) because the parent never re-fetches after a
   // submit — initialSubmissions' reference only changes on a real session change.
+  //
+  // Defaults the viewed attempt to the latest one the first time history
+  // arrives (selectedSubmissionId is still null at that point, from the
+  // reset above) — but never overrides a selection the student already
+  // made by clicking a past attempt.
   useEffect(() => {
     setSubmissions(initialSubmissions);
+    setSelectedSubmissionId((prev) => prev ?? (initialSubmissions.length > 0 ? initialSubmissions[initialSubmissions.length - 1].id : null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSubmissions]);
+
+  const latestSubmission = submissions.length > 0 ? submissions[submissions.length - 1] : null;
+  const selectedSubmission = submissions.find((s) => s.id === selectedSubmissionId) ?? latestSubmission;
+
+  // Bounded polling for the SELECTED attempt's evaluation (not necessarily
+  // the latest — see selectedSubmissionId above) — fetches once immediately
+  // (covers "already EVALUATED/FAILED from a page reload/reselection" in a
+  // single request) and keeps polling only while the result is still
+  // PENDING/EVALUATING, stopping the moment a terminal status is seen, when
+  // the student selects a different attempt (cleanup below re-runs this
+  // effect for the new id — the old attempt's polling loop is torn down,
+  // never left running in the background), when the student leaves the
+  // page, or after MAX_EVALUATION_POLL_ATTEMPTS — never forever, and never
+  // more than one polling loop at a time. `evaluation` is only ever present
+  // on a real (mode="student") submission — preview's fabricated summaries
+  // carry none, so this never calls onFetchEvaluation in preview mode.
+  useEffect(() => {
+    setEvaluationDetail(null);
+    const submissionId = selectedSubmission?.id;
+    if (!submissionId || !selectedSubmission?.evaluation) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+
+    async function poll() {
+      if (cancelled) return;
+      attempts += 1;
+      try {
+        const detail = await onFetchEvaluation(submissionId!);
+        if (cancelled) return;
+        setEvaluationDetail(detail);
+        // Keep the "Exercise Attempts" list (driven by `submissions`, not
+        // `evaluationDetail`) in sync as this attempt's status/score
+        // changes — without this, the list would keep showing whatever
+        // status the initial fetch/submit response had (e.g. "Queued")
+        // even after this same polling loop discovers it's EVALUATED.
+        setSubmissions((prev) =>
+          prev.map((s) => (s.id === submissionId ? { ...s, evaluation: { status: detail.status, overallScore: detail.overallScore } } : s))
+        );
+        if ((detail.status === "PENDING" || detail.status === "EVALUATING") && attempts < MAX_EVALUATION_POLL_ATTEMPTS) {
+          timer = setTimeout(poll, EVALUATION_POLL_INTERVAL_MS);
+        }
+      } catch {
+        // A transient fetch error shouldn't spam retries forever — bounded
+        // by the same attempts counter as a normal poll, then give up
+        // quietly (the student can still reload to try again).
+        if (!cancelled && attempts < MAX_EVALUATION_POLL_ATTEMPTS) {
+          timer = setTimeout(poll, EVALUATION_POLL_INTERVAL_MS);
+        }
+      }
+    }
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSubmission?.id]);
 
   useEffect(() => {
     if (videoState !== "playing") return;
@@ -381,10 +733,18 @@ export default function SessionWorkspace({
     setExerciseSubmitError(null);
     try {
       const submission = await onSubmitExercise(filesToSubmit, content.exercise.language);
+      // No separate transient "submitted!" toast — the persistent "Your
+      // Submission" block below picks this submission up immediately and
+      // shows exactly the "received -> queued -> evaluating -> evaluated"
+      // progression itself, via the polling effect above. A fresh submit
+      // always takes over the selection (even if the student was
+      // currently viewing an older attempt) — clearing evaluationDetail in
+      // the same batch avoids ever flashing the previously-selected
+      // attempt's result under the new attempt's heading for a frame.
       setSubmissions((prev) => [...prev, submission]);
-      setLastSubmission(submission);
-      setExerciseSubmitted(true);
-      setExerciseSubmitPhase("success");
+      setSelectedSubmissionId(submission.id);
+      setEvaluationDetail(null);
+      setExerciseSubmitPhase("idle");
     } catch (err) {
       // Stay in "confirming" so Submit is one click away again, rather than
       // silently dropping the student back to the plain "Submit Exercise"
@@ -412,8 +772,22 @@ export default function SessionWorkspace({
   // NEXTSTEP2_VIDEO_CHECKPOINT_SYSTEM.md §J: reuse SessionActivitiesInput
   // verbatim, "completed" = every required checkpoint answered, "correct" =
   // every required checkpoint answered correctly (null if none required).
-  const learningDone = isLive ? attended : hasRealVideo ? videoEnded : videoState === "finished";
-  const videoCheckDone = hasRealVideo ? requiredCheckpoints.every((c) => videoAnswers[c.id] !== undefined) : checkpointSeen;
+  //
+  // "Locally" here means "derived purely from this mount's own interaction"
+  // — exactly the same rule as before this slice, completely unchanged.
+  // Server-Side Session Activity Progress slice: the actually-used
+  // learningDone/videoCheckDone below also OR in persistedActivities (see
+  // above), so an activity already completed in an earlier visit still
+  // reads as done after a refresh — without that OR, these would silently
+  // regress to "incomplete" on every fresh mount. The *Locally variants are
+  // kept separate specifically to drive the persistence-triggering effects
+  // further below: they must fire only on a genuine NEW local completion,
+  // never merely because the persisted flag caught up asynchronously.
+  const learningDoneLocally = isLive ? attended : hasRealVideo ? videoEnded : videoState === "finished";
+  const videoCheckDoneLocally = hasRealVideo ? requiredCheckpoints.every((c) => videoAnswers[c.id] !== undefined) : checkpointSeen;
+  const learningDone = learningDoneLocally || persistedActivities.has("learning");
+  const videoCheckDone = videoCheckDoneLocally || persistedActivities.has("videoCheck");
+  const practiceDone = practiceViewed || persistedActivities.has("practice");
   const videoCheckCorrect = hasRealVideo
     ? requiredCheckpoints.length === 0
       ? null
@@ -425,6 +799,38 @@ export default function SessionWorkspace({
   const handleVideoEnded = useCallback(() => setVideoEnded(true), []);
   const handleVideoAnswersChange = useCallback((answers: Record<string, boolean>) => setVideoAnswers(answers), []);
 
+  // Server-Side Session Activity Progress slice — persists each activity to
+  // the real backend at most once per genuine new local completion (never
+  // re-fired just because persistedActivities caught up, and never on a
+  // timer/per-tick during playback — see onCompleteActivity's own doc
+  // comment on SessionWorkspaceProps). Fire-and-forget: a failure here is
+  // not shown to the student directly, since this is a non-terminal,
+  // cosmetic signal — Complete Session (which DOES surface errors) is the
+  // one place a real rejection actually matters, and it independently
+  // re-checks the backend's own StudentActivityProgress rows regardless of
+  // what this component believes locally.
+  useEffect(() => {
+    if (learningDoneLocally) onCompleteActivity("learning").catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [learningDoneLocally]);
+
+  useEffect(() => {
+    if (!videoCheckDoneLocally) return;
+    // The real video player tracks answers per checkpoint id (videoAnswers);
+    // the no-video mock fallback only ever has one single checkpoint
+    // (content.checkpoints[0], tracked by the simpler checkpointSeen flag —
+    // see activeCheckpoint above), so its answered-id list is just that one
+    // checkpoint's own id once seen.
+    const answeredCheckpointIds = hasRealVideo ? Object.keys(videoAnswers) : activeCheckpoint ? [activeCheckpoint.id] : [];
+    onCompleteActivity("videoCheck", { answeredCheckpointIds }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoCheckDoneLocally]);
+
+  useEffect(() => {
+    if (practiceViewed) onCompleteActivity("practice").catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [practiceViewed]);
+
   // Single source of truth for both the persisted performance record and the
   // on-screen Complete-screen percentage — see
   // NEXTSTEP2_FRONTEND_BACKEND_DATA_CONTRACT_AUDIT.md's Performance
@@ -435,20 +841,44 @@ export default function SessionWorkspace({
   const activities: SessionActivitiesInput = {
     learning: { completed: learningDone },
     videoCheck: { completed: videoCheckDone, correct: videoCheckCorrect },
-    practice: { completed: practiceViewed },
+    practice: { completed: practiceDone },
     exercise: { completed: exerciseSubmitted },
   };
   const performanceScore = calculateSessionScore(activities);
 
-  function handleCompleteSession() {
-    onCompleteSession(activities);
-    setWorkspaceView("complete");
+  // Student Session Completion Persistence slice: onCompleteSession now
+  // calls the real backend and only resolves once completion is durably
+  // recorded there — this only shows the completion screen AFTER that
+  // succeeds, never optimistically. A rejection (network failure, or the
+  // backend's own validation, e.g. a missing required Exercise submission)
+  // surfaces as completeSessionError instead, exactly like
+  // exerciseSubmitError above; the session stays on its current view so the
+  // student can retry.
+  async function handleCompleteSession() {
+    setCompleteSessionError(null);
+    setCompletingSession(true);
+    try {
+      await onCompleteSession(activities);
+      setWorkspaceView("complete");
+    } catch (err) {
+      // Only an ApiError carries a real, backend-authored rejection reason
+      // (e.g. "this session requires an Exercise submission first") worth
+      // showing verbatim — anything else (a network failure, an aborted
+      // request, an unreachable server) surfaces the same generic, honest
+      // message rather than a raw browser/fetch error string like "Failed
+      // to fetch".
+      setCompleteSessionError(
+        err instanceof ApiError ? err.message : "Unable to save your session completion. Please try again."
+      );
+    } finally {
+      setCompletingSession(false);
+    }
   }
 
   const activityDone: Record<ActivityKey, boolean> = {
     learning: learningDone,
     videoCheck: videoCheckDone,
-    practice: practiceViewed,
+    practice: practiceDone,
     exercise: exerciseSubmitted,
   };
   const requirements = content.requiredActivities.map((key) => ({
@@ -783,30 +1213,7 @@ export default function SessionWorkspace({
                     </p>
                   )}
 
-                  {exerciseSubmitPhase === "success" && lastSubmission ? (
-                    <div className="mt-4 rounded-xl border border-brand-100 bg-brand-50/50 p-5">
-                      <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600">
-                        <CheckIcon className="h-4 w-4" />
-                        Exercise Submitted
-                      </p>
-                      <p className="mt-1.5 text-sm text-navy-500/70">
-                        Attempt #{lastSubmission.attemptNumber} submitted successfully.
-                      </p>
-                      <p className="mt-1 text-xs text-navy-500/50">
-                        {isPreview
-                          ? "This was a preview submission — no student record was created."
-                          : "Your submission has been recorded. This exercise has not been automatically graded yet."}
-                      </p>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="mt-3 !w-auto px-6"
-                        onClick={() => setExerciseSubmitPhase("idle")}
-                      >
-                        Continue
-                      </Button>
-                    </div>
-                  ) : exerciseSubmitPhase === "confirming" ? (
+                  {exerciseSubmitPhase === "confirming" ? (
                     <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
                       <p className="text-sm font-semibold text-navy-500">Submit Exercise</p>
                       <p className="mt-1.5 text-sm text-navy-500/70">
@@ -837,32 +1244,68 @@ export default function SessionWorkspace({
                     </div>
                   ) : (
                     <Button type="button" className="mt-4 !w-auto px-6" onClick={() => setExerciseSubmitPhase("confirming")}>
-                      Submit Exercise
+                      {submissions.length > 0 ? "Submit Another Attempt" : "Submit Exercise"}
                     </Button>
                   )}
 
-                  {submissions.length > 0 && exerciseSubmitPhase === "idle" && (
+                  {/* Your Submission — the SELECTED attempt's evaluation
+                      (received -> queued -> evaluating -> evaluated/failed),
+                      driven by the polling effect above. Defaults to the
+                      latest attempt, but a student can click any attempt
+                      below to view its own result instead — see
+                      selectedSubmissionId. Never shown in preview
+                      (fabricated preview submissions carry no `evaluation`,
+                      so this block never renders there). */}
+                  {selectedSubmission && selectedSubmission.evaluation && (
+                    <div className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                      <div className="border-b border-slate-100 px-5 py-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-navy-500/40">Your Submission</p>
+                        <p className="text-sm font-semibold text-navy-500">Attempt #{selectedSubmission.attemptNumber}</p>
+                      </div>
+                      <div className="p-5">
+                        <EvaluationStateBody detail={evaluationDetail} fallbackStatus={selectedSubmission.evaluation.status} />
+                      </div>
+                    </div>
+                  )}
+
+                  {submissions.length > 0 && (
                     <div className="mt-5">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-navy-500/40">
-                        Previous submissions
-                      </p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-navy-500/40">Exercise Attempts</p>
                       <ul className="mt-2 flex flex-col gap-1.5">
-                        {submissions.map((s) => (
-                          <li
-                            key={s.id}
-                            className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm"
-                          >
-                            <span className="font-medium text-navy-500">Attempt #{s.attemptNumber}</span>
-                            <span className="text-xs text-navy-500/50">
-                              {new Date(s.submittedAt).toLocaleString(undefined, {
-                                month: "short",
-                                day: "numeric",
-                                hour: "numeric",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </li>
-                        ))}
+                        {submissions.map((s) => {
+                          const isSelected = s.id === selectedSubmission?.id;
+                          return (
+                            <li key={s.id}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isSelected) return;
+                                  // Clear the previous attempt's detail in
+                                  // the same batch as the selection change
+                                  // so its result is never shown — even
+                                  // for a single frame — under the newly
+                                  // selected attempt's heading while the
+                                  // fresh fetch is in flight (the polling
+                                  // effect's own reset would otherwise only
+                                  // apply on its next run, after this
+                                  // render commits).
+                                  setSelectedSubmissionId(s.id);
+                                  setEvaluationDetail(null);
+                                }}
+                                aria-current={isSelected ? "true" : undefined}
+                                className={`flex w-full items-center justify-between rounded-lg border px-3.5 py-2.5 text-left text-sm transition-colors ${
+                                  isSelected ? "border-brand-200 bg-brand-50/40" : "border-slate-200 bg-white hover:border-slate-300"
+                                }`}
+                              >
+                                <span className="inline-flex items-center gap-1.5 font-medium text-navy-500">
+                                  Attempt #{s.attemptNumber}
+                                  {isSelected && <span className="text-xs font-semibold text-brand-600">(viewing)</span>}
+                                </span>
+                                <AttemptStatusBadge evaluation={s.evaluation} />
+                              </button>
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   )}
@@ -883,7 +1326,7 @@ export default function SessionWorkspace({
                       <CheckIcon className="h-7 w-7 text-brand-500" />
                     </div>
                     <h2 className="mt-4 text-xl font-bold text-navy-500">Session Complete</h2>
-                    <p className="mt-1 text-sm text-navy-500/60">Nice progress, {greetingName}!</p>
+                    <p className="mt-1 text-sm text-navy-500/60">Nice progress{greetingName ? `, ${greetingName}` : ""}!</p>
                     {isPreview && (
                       <p className="mt-1.5 text-xs font-medium text-navy-500/40">
                         Preview only — no student progress or performance record was created.
@@ -947,7 +1390,9 @@ export default function SessionWorkspace({
 
             {workspaceView !== "complete" && (
               <div className="flex flex-col gap-2.5 border-t border-slate-100 px-6 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-                {isSessionReady ? (
+                {completeSessionError ? (
+                  <p className="rounded-lg bg-error/10 px-3 py-2 text-xs font-medium text-error">{completeSessionError}</p>
+                ) : isSessionReady ? (
                   <p className="inline-flex items-center gap-1.5 text-xs font-medium text-navy-500/50">
                     <CheckIcon className="h-3.5 w-3.5 text-brand-500" />
                     You&apos;re ready to complete this session.
@@ -972,11 +1417,18 @@ export default function SessionWorkspace({
                 <Button
                   type="button"
                   variant={isSessionReady ? "primary" : "secondary"}
-                  disabled={!isSessionReady}
+                  disabled={!isSessionReady || completingSession}
                   className="!w-auto px-6 sm:ml-auto"
                   onClick={handleCompleteSession}
                 >
-                  Complete Session &rarr;
+                  {completingSession ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Spinner className="h-4 w-4" />
+                      Saving&hellip;
+                    </span>
+                  ) : (
+                    <>Complete Session &rarr;</>
+                  )}
                 </Button>
               </div>
             )}

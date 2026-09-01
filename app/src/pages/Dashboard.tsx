@@ -2,7 +2,7 @@ import type { ReactElement } from "react";
 import { Link } from "react-router-dom";
 import StudentLayout from "../components/StudentLayout";
 import Button from "../components/Button";
-import { COURSE, STUDENT, type Subject, type SubjectStatus } from "../data/mock";
+import { COURSE, type Subject, type SubjectStatus } from "../data/mock";
 import { useCourseData } from "../data/progress";
 
 const STATUS_STYLES: Record<
@@ -99,9 +99,13 @@ function SubjectCard({ subject, index }: { subject: Subject; index: number }) {
 }
 
 export default function Dashboard() {
-  const { subjects, courseProgress, currentSession } = useCourseData();
+  const { subjects, courseProgress, currentSession, currentUser } = useCourseData();
   const { completedSubjects, totalSubjects, courseProgressPercent } = courseProgress;
   const hasStarted = subjects.some((s) => s.status === "in-progress" || s.status === "completed");
+  // Real Student Identity slice — the authenticated user's real first name
+  // (GET /auth/me), never mock.ts's hardcoded STUDENT. Blank while loading
+  // or logged out rather than ever showing a fabricated name.
+  const firstName = currentUser?.name.split(" ")[0] ?? "";
 
   return (
     <StudentLayout>
@@ -109,7 +113,7 @@ export default function Dashboard() {
         {/* 1. Welcome */}
         <div>
           <h1 className="text-[28px] font-bold tracking-tight text-navy-500 sm:text-3xl">
-            Welcome back, {STUDENT.name.split(" ")[0]}
+            Welcome back{firstName ? `, ${firstName}` : ""}
           </h1>
           <p className="mt-1.5 text-[15px] text-navy-500/60">Continue your learning journey.</p>
         </div>

@@ -1,0 +1,275 @@
+{
+  "sessionId": "queue-implementation",
+  "results": [
+    {
+      "ok": true,
+      "studentId": "74019a75-9670-44f5-90f4-bd6062a5864f",
+      "email": "loadtest-slice8-400-1788249049391@nextstep2.dev",
+      "submissionId": "6edd10af-e6dc-4cd5-8995-a2d3e820f478",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:09.759Z"
+    },
+    {
+      "ok": true,
+      "studentId": "a26e940c-2a2e-4fe5-9775-5a24d83e6ea5",
+      "email": "loadtest-slice8-401-1788249049391@nextstep2.dev",
+      "submissionId": "5d6b30d2-b49c-4d57-8dba-5d2999ee808c",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:42.664Z"
+    },
+    {
+      "ok": true,
+      "studentId": "37e222e2-fea6-4b4a-a937-1178b388b12b",
+      "email": "loadtest-slice8-402-1788249049391@nextstep2.dev",
+      "submissionId": "2d255354-07eb-469d-8b9f-b8758b1c02d6",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:42.687Z"
+    },
+    {
+      "ok": true,
+      "studentId": "12ca2546-a366-405d-a621-648cfd7f8d72",
+      "email": "loadtest-slice8-403-1788249049392@nextstep2.dev",
+      "submissionId": "b9ab2e5b-6824-40f8-8046-911a9f0c1ef8",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.276Z"
+    },
+    {
+      "ok": true,
+      "studentId": "dd985d69-ac6f-4f2f-b417-c4c2464c7353",
+      "email": "loadtest-slice8-404-1788249049392@nextstep2.dev",
+      "submissionId": "590709d7-0e84-4680-b611-8b4bb60e73e6",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:09.996Z"
+    },
+    {
+      "ok": true,
+      "studentId": "dd00acd3-a589-495c-bd6e-88896f35d390",
+      "email": "loadtest-slice8-405-1788249049392@nextstep2.dev",
+      "submissionId": "574acb79-09f7-4447-bbe3-3f0fa7a31dea",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:10.793Z"
+    },
+    {
+      "ok": true,
+      "studentId": "5064cc44-b872-454b-8399-c4df4a4700e2",
+      "email": "loadtest-slice8-406-1788249049392@nextstep2.dev",
+      "submissionId": "51ae1530-08e3-44ef-9d7e-37aba053c6f2",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:11.131Z"
+    },
+    {
+      "ok": true,
+      "studentId": "d2fe0856-524b-4610-88bc-e2fefdf281e7",
+      "email": "loadtest-slice8-407-1788249049392@nextstep2.dev",
+      "submissionId": "945695e7-45a1-4e1f-b7d9-f183c1a6e312",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.892Z"
+    },
+    {
+      "ok": true,
+      "studentId": "55e42d81-5c73-4c7e-90cf-c8c385278aef",
+      "email": "loadtest-slice8-408-1788249049392@nextstep2.dev",
+      "submissionId": "665f2126-a8fa-4aec-999e-e175e3a451ac",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:42.858Z"
+    },
+    {
+      "ok": true,
+      "studentId": "6db97dfe-415d-4d78-85d2-dd43f8cded9c",
+      "email": "loadtest-slice8-409-1788249049392@nextstep2.dev",
+      "submissionId": "9f48d138-8267-402b-81c4-f2e95a455380",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.911Z"
+    },
+    {
+      "ok": true,
+      "studentId": "63e24cdb-30dc-4475-ae76-5b123991e512",
+      "email": "loadtest-slice8-410-1788249049393@nextstep2.dev",
+      "submissionId": "351d7985-707c-4803-a382-fdb2698d60a0",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:57:05.171Z"
+    },
+    {
+      "ok": true,
+      "studentId": "70dc3bfe-f064-4622-8772-c49fb860107f",
+      "email": "loadtest-slice8-411-1788249049393@nextstep2.dev",
+      "submissionId": "4247a1ca-97f7-4224-bad3-d3083d57c249",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:11.263Z"
+    },
+    {
+      "ok": true,
+      "studentId": "acd174b6-4752-45f5-b2aa-54a16363588c",
+      "email": "loadtest-slice8-412-1788249049393@nextstep2.dev",
+      "submissionId": "aabc66ec-d925-47ce-ac77-68723c079fa3",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:11.230Z"
+    },
+    {
+      "ok": true,
+      "studentId": "f4b21d2b-fd3e-44bc-98eb-93e3c079b439",
+      "email": "loadtest-slice8-413-1788249049393@nextstep2.dev",
+      "submissionId": "9ea4da83-0e9d-4a37-bff2-ad401488b451",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.065Z"
+    },
+    {
+      "ok": true,
+      "studentId": "388fe0b9-9316-40b9-814b-f4a557cb50d0",
+      "email": "loadtest-slice8-414-1788249049393@nextstep2.dev",
+      "submissionId": "6fb9bea3-0eb9-4282-b10c-c5ccf754980f",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.949Z"
+    },
+    {
+      "ok": true,
+      "studentId": "d2bfddb5-a243-403b-8201-efb0df8b170f",
+      "email": "loadtest-slice8-415-1788249049393@nextstep2.dev",
+      "submissionId": "ea3ecdb5-18a5-433b-89b3-bc7ce2148980",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:57:05.382Z"
+    },
+    {
+      "ok": true,
+      "studentId": "ed134d71-4b8f-4ba8-8032-db2139ce8ef6",
+      "email": "loadtest-slice8-416-1788249049393@nextstep2.dev",
+      "submissionId": "0a497404-86e5-4e01-a102-2772d059f60c",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:11.700Z"
+    },
+    {
+      "ok": true,
+      "studentId": "ea16edb1-8ba3-436c-83f7-67ed2c99ee59",
+      "email": "loadtest-slice8-417-1788249049393@nextstep2.dev",
+      "submissionId": "14672b2d-300e-47b5-bf4c-1cd8473078b9",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:11.895Z"
+    },
+    {
+      "ok": true,
+      "studentId": "b01fc6c6-58ef-455d-a879-4834740cbff0",
+      "email": "loadtest-slice8-418-1788249049394@nextstep2.dev",
+      "submissionId": "e58f6b7b-767e-4427-bc78-e35fd222e2dd",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:12.944Z"
+    },
+    {
+      "ok": true,
+      "studentId": "a2c851a2-9226-442f-b957-c857a65a52d6",
+      "email": "loadtest-slice8-419-1788249049394@nextstep2.dev",
+      "submissionId": "742f4b71-d8b7-4ddb-9761-04cea6b44b36",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:57:03.410Z"
+    },
+    {
+      "ok": true,
+      "studentId": "088d0d1f-4592-4d99-9a21-479121d15d9c",
+      "email": "loadtest-slice8-420-1788249050249@nextstep2.dev",
+      "submissionId": "8f9755f9-292b-46b6-935c-571ab6c6a8b4",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:11.747Z"
+    },
+    {
+      "ok": true,
+      "studentId": "7ddea975-4a29-4788-acef-54de7d43f2f8",
+      "email": "loadtest-slice8-421-1788249050249@nextstep2.dev",
+      "submissionId": "8e38a511-d834-4371-b304-90d1316fb9e7",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:12.670Z"
+    },
+    {
+      "ok": true,
+      "studentId": "4711b9db-3bdd-4d86-804f-57d6ef16db61",
+      "email": "loadtest-slice8-422-1788249050250@nextstep2.dev",
+      "submissionId": "e02fed6a-e991-41c8-925d-39767360d27b",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:57:03.255Z"
+    },
+    {
+      "ok": true,
+      "studentId": "d6ddb6bf-d5b7-4d33-a944-707fc7e0e622",
+      "email": "loadtest-slice8-423-1788249050250@nextstep2.dev",
+      "submissionId": "a20950df-663f-4515-ba0b-4942212c7f8f",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.522Z"
+    },
+    {
+      "ok": true,
+      "studentId": "20bf4944-8156-4012-8f33-60a65201e051",
+      "email": "loadtest-slice8-424-1788249050250@nextstep2.dev",
+      "submissionId": "bcfb8120-84f4-4c96-9372-a03d9f54f8de",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.540Z"
+    },
+    {
+      "ok": true,
+      "studentId": "a414991d-879f-40d3-bd07-6001d33e4ff6",
+      "email": "loadtest-slice8-425-1788249050250@nextstep2.dev",
+      "submissionId": "2d46bc1a-57a0-43ee-83ca-4994f4c2b473",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.688Z"
+    },
+    {
+      "ok": true,
+      "studentId": "95b7e1da-6676-48cb-b722-51adf8f92a87",
+      "email": "loadtest-slice8-426-1788249050250@nextstep2.dev",
+      "submissionId": "2a296590-6008-4233-af05-f80a2db0a770",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.681Z"
+    },
+    {
+      "ok": true,
+      "studentId": "0e354db6-4d07-4e08-852b-115861f175d2",
+      "email": "loadtest-slice8-427-1788249050250@nextstep2.dev",
+      "submissionId": "c52839f8-8a16-4571-9060-35faa73e204b",
+      "variant": "correct",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:53:12.676Z"
+    },
+    {
+      "ok": true,
+      "studentId": "aae13849-c646-4b2e-adf3-7c23503368de",
+      "email": "loadtest-slice8-428-1788249050250@nextstep2.dev",
+      "submissionId": "152007a6-86d7-4ae5-8b33-3b9e11956d61",
+      "variant": "partial",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.730Z"
+    },
+    {
+      "ok": true,
+      "studentId": "fd760ce4-86ea-45e8-8379-e4191cf42040",
+      "email": "loadtest-slice8-429-1788249050250@nextstep2.dev",
+      "submissionId": "8ca17eb2-9af8-446e-b3ab-68d00baa7d97",
+      "variant": "wrong",
+      "completeStatus": 201,
+      "completedAt": "2026-09-01T07:59:43.892Z"
+    }
+  ]
+}

@@ -29,9 +29,31 @@
 // service, controller, or AI provider exists yet — see each model's own
 // doc comment; that is later slices' work (2.1+).
 //
+// Student Session Completion Persistence slice adds StudentSessionProgress:
+// the first backend-authoritative record of "this student completed this
+// session," replacing the frontend's previous localStorage-only
+// completedSessionIds. Deliberately minimal — completedAt only, no score, no
+// activity breakdown, no AI evaluation result (those remain
+// ExerciseSubmission/ExerciseEvaluation's job, and session_performance's, per
+// below).
+//
+// Slice 3 (Server-Side Session Activity Progress) adds StudentActivityProgress
+// + ActivityType: backend-authoritative evidence that a student completed
+// Learning, Video Check, or Practice for a session — closing the gap where
+// only Exercise (ExerciseSubmission) had any server-side trace at all.
+// Deliberately NOT a full checkpoint-answer-history table: it records only
+// that an activity was completed, once, per (student, session, activity) —
+// see that model's own doc comment for exactly what each activity type does
+// and does not prove.
+//
 // Still explicitly NOT in this schema (later phases): enrollments,
-// video_checkpoints/video_checkpoint_answers as their own tables,
-// session_completions, session_performance, portfolios, audit events.
+// video_checkpoints/video_checkpoint_answers as their own tables (per-answer
+// history remains unpersisted — only the fact of completion is), session_
+// performance (score/activity-breakdown detail — still frontend-localStorage-
+// only, out of scope for this slice), portfolios, audit events, and any
+// course/subject-level aggregate progress table (that aggregation is still
+// computed client-side from the set of completed sessions, exactly as
+// before).
 // ---------------------------------------------------------------------------
 
 generator client {
@@ -91,6 +113,18 @@ enum EvaluationStatus {
   @@map("evaluation_status")
 }
 
+/// Slice 3 — the three required activities besides Exercise (which keeps its
+/// own, already-existing source of truth: ExerciseSubmission). Intentionally
+/// excludes an EXERCISE value here — never create a second, competing
+/// completion record for it.
+enum ActivityType {
+  LEARNING
+  VIDEO_CHECK
+  PRACTICE
+
+  @@map("activity_type")
+}
+
 /// A single users table with a role column — per the frozen domain model §1,
 /// extended from three roles to four (the Content Author/Reviewer split,
 /// already implemented at the frontend layer — see the architecture doc's
@@ -104,11 +138,13 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  refreshTokens       RefreshToken[]
-  importedPackages    ContentPackage[]     @relation("PackageAuthor")
-  publications        Publication[]        @relation("PublicationPublisher")
-  contentReviews      ContentReview[]      @relation("ContentReviewReviewer")
-  exerciseSubmissions ExerciseSubmission[]
+  refreshTokens        RefreshToken[]
+  importedPackages     ContentPackage[]         @relation("PackageAuthor")
+  publications         Publication[]            @relation("PublicationPublisher")
+  contentReviews       ContentReview[]          @relation("ContentReviewReviewer")
+  exerciseSubmissions  ExerciseSubmission[]
+  sessionProgress      StudentSessionProgress[]
+  activityProgress     StudentActivityProgress[]
 
   @@map("users")
 }
@@ -168,6 +204,8 @@ model Session {
   publications        Publication[]
   contentPackages     ContentPackage[]
   exerciseSubmissions ExerciseSubmission[]
+  studentProgress     StudentSessionProgress[]
+  activityProgress    StudentActivityProgress[]
 
   @@index([subjectId])
   @@map("sessions")
@@ -423,4 +461,80 @@ model ExerciseEvaluation {
   @@index([status])
   @@index([status, nextAttemptAt])
   @@map("exercise_evaluations")
+}
+
+/// Student Session Completion Persistence slice — the ONE backend-owned fact
+/// of "has this student completed this session," replacing the frontend's
+/// previous localStorage-only `completedSessionIds`. One row per
+/// (studentId, sessionId), enforced by the unique constraint below, so
+/// completing the same session twice is a safe no-op rather than a growing
+/// history — there is exactly one authoritative completedAt per student per
+/// session, not an append-only log.
+///
+/// Deliberately does NOT store score, activity breakdown, or AI evaluation
+/// results — ExerciseSubmission/ExerciseEvaluation already own exercise
+/// scoring, and the frontend's separate (still localStorage-only)
+/// session_performance record already owns the Video-Check-derived score
+/// display. Duplicating either here would be a second, driftable source of
+/// truth for something that already has one.
+model StudentSessionProgress {
+  id          String   @id @default(uuid())
+  studentId   String   @map("student_id")
+  student     User     @relation(fields: [studentId], references: [id])
+  sessionId   String   @map("session_id")
+  session     Session  @relation(fields: [sessionId], references: [id])
+  completedAt DateTime @default(now()) @map("completed_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([studentId, sessionId])
+  @@index([studentId])
+  @@map("student_session_progress")
+}
+
+/// Slice 3 (Server-Side Session Activity Progress) — backend evidence that a
+/// student completed one of the three non-Exercise required activities.
+/// One row per (studentId, sessionId, activityType), enforced by the unique
+/// constraint below — completing the same activity twice is a safe no-op,
+/// never a growing history; there is exactly one completedAt per activity
+/// per student per session.
+///
+/// HONESTY ABOUT WHAT EACH VALUE PROVES (be precise — do not overclaim):
+///   - LEARNING: the backend has NO independent way to verify real YouTube
+///     playback (or, for a live session, real attendance). A row here means
+///     only "the client reported this activity as watched/attended" —
+///     exactly the same trust level the old localStorage-only signal had,
+///     now merely durable and tied to the authenticated student instead of
+///     a browser profile. This is NOT proof the video was actually watched.
+///   - PRACTICE: same trust level — a row here means "the client reported
+///     Practice as opened," per the existing, unchanged "opened = complete"
+///     rule (there is no correctness check for Practice). NOT independent
+///     verification of learning.
+///   - VIDEO_CHECK: the one activity with real, structural server-side
+///     verification — ActivityProgressService.completeActivity() requires
+///     the caller to submit the set of checkpoint ids it answered, and
+///     rejects the request unless every checkpoint the session's own
+///     published ContentVersion.checkpoints marks `required: true` is
+///     present in that set. Correctness is deliberately never checked here
+///     (a wrong answer still counts as answered, matching the frontend's
+///     own unchanged videoCheckDone rule) — only "was every required
+///     question actually answered."
+///
+/// No answers, scores, or per-checkpoint history are stored here — that
+/// would be unnecessary analytics this slice was explicitly told to avoid;
+/// this table only ever answers "was this activity completed, and when."
+model StudentActivityProgress {
+  id           String       @id @default(uuid())
+  studentId    String       @map("student_id")
+  student      User         @relation(fields: [studentId], references: [id])
+  sessionId    String       @map("session_id")
+  session      Session      @relation(fields: [sessionId], references: [id])
+  activityType ActivityType @map("activity_type")
+  completedAt  DateTime     @default(now()) @map("completed_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@unique([studentId, sessionId, activityType])
+  @@index([studentId, sessionId])
+  @@map("student_activity_progress")
 }

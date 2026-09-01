@@ -7,6 +7,8 @@ import { PackagesModule } from './packages/packages.module';
 import { ReviewModule } from './review/review.module';
 import { SubmissionsModule } from './submissions/submissions.module';
 import { EvaluationModule } from './evaluation/evaluation.module';
+import { ProgressModule } from './progress/progress.module';
+import { ActivityProgressModule } from './activity-progress/activity-progress.module';
 
 /**
  * Modular monolith per NEXTSTEP2_BACKEND_ARCHITECTURE_AND_TECHNOLOGY_SELECTION.md
@@ -18,6 +20,12 @@ import { EvaluationModule } from './evaluation/evaluation.module';
  * write path: real, backend-persisted Exercise submissions. Evaluation
  * (Slice 2.1) adds the evaluation lifecycle behind a deterministic fake
  * evaluator, proving the architecture before any real AI provider (2.3).
+ * Progress (Student Session Completion Persistence slice) adds the first
+ * backend-authoritative record of session completion, replacing the
+ * frontend's previous localStorage-only completedSessionIds. ActivityProgress
+ * (Slice 3) extends that to Learning/Video Check/Practice — the three
+ * required activities besides Exercise that previously had no backend trace
+ * at all — and ProgressModule's completeSession now checks it too.
  */
 @Module({
   imports: [
@@ -29,6 +37,8 @@ import { EvaluationModule } from './evaluation/evaluation.module';
     ReviewModule,
     SubmissionsModule,
     EvaluationModule,
+    ProgressModule,
+    ActivityProgressModule,
   ],
 })
 export class AppModule {}

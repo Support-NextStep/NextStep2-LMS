@@ -29,25 +29,58 @@
 // browser has no live session at all (never logged in this tab, logged out,
 // or the 15-minute access token already expired with nothing having
 // refreshed it) — the same as any other authenticated call in this app.
+//
+// STUDENT EVALUATION UI slice adds fetchEvaluationForSubmission() — the
+// per-attempt detail read (score/criteria/strengths/improvements/feedback).
+// Both this and fetchSubmissionsForSession() are read-only GETs; nothing
+// here ever sends a score, status, criteria, studentId, or contentVersionId
+// — those remain entirely server-derived, exactly like submitExercise().
 // ---------------------------------------------------------------------------
 
 import { apiGet, apiPost } from "./apiClient";
 import type { CodeFile } from "./practiceExecution";
+
+export type EvaluationStatus = "PENDING" | "EVALUATING" | "EVALUATED" | "FAILED";
 
 /**
  * `evaluation` is additive (AI Evaluation Reliability slice) — the backend
  * now always includes it, since evaluation runs in a background worker
  * rather than synchronously during submit(): a submission starts out
  * PENDING and moves through EVALUATING to EVALUATED/FAILED independently of
- * the HTTP response that created it. Optional here (not yet rendered
- * anywhere — no UI change in this slice) so this type stays accurate
- * without forcing every existing caller to handle it.
+ * the HTTP response that created it. Optional here so this type stays
+ * accurate for any caller that doesn't need it.
  */
 export type SubmissionSummary = {
   id: string;
   attemptNumber: number;
   submittedAt: string;
-  evaluation?: { status: "PENDING" | "EVALUATING" | "EVALUATED" | "FAILED"; overallScore: number | null } | null;
+  evaluation?: { status: EvaluationStatus; overallScore: number | null } | null;
+};
+
+export type CriterionResult = {
+  criterion: string;
+  score: number;
+  passed: boolean;
+  feedback: string;
+};
+
+/**
+ * Only the fields the Student Evaluation UI actually renders — the backend
+ * response also includes providerName/retryCount/nextAttemptAt/attemptedAt/
+ * evaluatedAt (operational bookkeeping), which are simply not declared here
+ * rather than surfaced to a student-facing screen. `failureReason` IS
+ * fetched but deliberately never rendered verbatim in the UI (see
+ * SessionWorkspace.tsx) — it's internal/operator text, not something to
+ * show a student directly.
+ */
+export type EvaluationDetail = {
+  status: EvaluationStatus;
+  overallScore: number | null;
+  criteriaResults: CriterionResult[] | null;
+  strengths: string[];
+  improvements: string[];
+  feedback: string | null;
+  failureReason: string | null;
 };
 
 export async function submitExercise(sessionId: string, files: CodeFile[]): Promise<SubmissionSummary> {
@@ -56,4 +89,9 @@ export async function submitExercise(sessionId: string, files: CodeFile[]): Prom
 
 export async function fetchSubmissionsForSession(sessionId: string): Promise<SubmissionSummary[]> {
   return apiGet<SubmissionSummary[]>(`/sessions/${sessionId}/exercise/submissions`);
+}
+
+/** One attempt's full evaluation result — score, criteria, strengths, improvements, feedback. Ownership (this student's own submission, in this session) is verified server-side; see EvaluationService.getEvaluationForStudent(). */
+export async function fetchEvaluationForSubmission(sessionId: string, submissionId: string): Promise<EvaluationDetail> {
+  return apiGet<EvaluationDetail>(`/sessions/${sessionId}/exercise/submissions/${submissionId}/evaluation`);
 }

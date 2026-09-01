@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { createConnection } from 'net';
 import { ConfigService } from '@nestjs/config';
 import { ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,10 +22,71 @@ import { PermanentEvaluationError, RetryableEvaluationError, type EvaluationInpu
 // silently skipping). All rows created by this file are deleted in
 // afterAll(); the ContentVersion-pinning test additionally restores the
 // original Publication state it temporarily supersedes, in a try/finally.
+//
+// PRECONDITION, now enforced (not just documented): the real backend's
+// EvaluationWorkerService must not be running while this suite runs — it
+// polls this same exercise_evaluations table in the background and can
+// claim/process this suite's own rows with the real evaluator instead of
+// ControllableEvaluator. beforeAll() below refuses to proceed if anything
+// is listening on the backend's port, rather than risk the intermittent
+// "expected FAILED, got EVALUATED" failure that motivated this guard — see
+// assertNoLiveBackendServer()'s own comment for the full mechanism.
 // ---------------------------------------------------------------------------
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Root-cause guard for a real, previously-observed intermittent failure in
+ * this file (the "becomes FAILED once retries are exhausted" test): if the
+ * REAL backend (with its REAL EvaluationWorkerService, which polls
+ * exercise_evaluations every ~2s by default — see evaluation-config.ts's
+ * pollIntervalMs) is still running, it claims and processes real rows in
+ * the exact same table this suite creates rows in, using the REAL
+ * evaluator instead of this file's ControllableEvaluator. That retry test
+ * specifically sleeps ~2020ms waiting for its own backoff to become due —
+ * almost exactly one real poll interval — so a still-running worker can
+ * (rarely, but non-deterministically) claim and successfully evaluate the
+ * test's own PENDING row during that window, flipping it to EVALUATED
+ * before the test's retry-exhaustion logic ever gets to reprocess it. This
+ * reproduced exactly once, and never again across 12 clean runs once the
+ * dev server was confirmed stopped — consistent with genuine external
+ * interference, not a flaw in the retry logic itself (which every isolated
+ * and full-file run has otherwise passed deterministically).
+ *
+ * Rather than leave that as a rare, confusing, hard-to-reproduce flake,
+ * this checks the precondition this whole file's header comment already
+ * assumes — "no live worker touching the same rows" — and fails the ENTIRE
+ * suite immediately and unambiguously if it's violated, before creating any
+ * test data. This is a test-only safety net: it changes no timing, no
+ * retry/backoff behavior, and no production code.
+ */
+function assertNoLiveBackendServer(port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ port, host: '127.0.0.1' });
+    const fail = () => {
+      socket.destroy();
+      reject(
+        new Error(
+          `A live server is already listening on port ${port}. This looks like the real backend ` +
+            `(and its background EvaluationWorkerService) still running — it polls exercise_evaluations ` +
+            `every ~${2_000}ms by default and WILL intermittently race this suite for the same rows, ` +
+            `occasionally flipping a test's PENDING row to EVALUATED before its own retry logic can run. ` +
+            `Stop the dev server (and confirm no orphaned child process is still bound to this port — ` +
+            `"taskkill /F" on the parent nest-cli watcher does not always kill its spawned "node dist/src/main" ` +
+            `child on Windows) before running this integration suite.`
+        )
+      );
+    };
+    socket.setTimeout(300);
+    socket.on('connect', fail);
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(); // nothing answered within the timeout — safe to proceed
+    });
+    socket.on('error', () => resolve()); // ECONNREFUSED etc. — nothing listening — safe to proceed
+  });
 }
 
 function configWith(overrides: Record<string, string>): ConfigService {
@@ -98,6 +160,8 @@ describe('AI Evaluation Reliability (integration, real Postgres, mock evaluator)
   }
 
   beforeAll(async () => {
+    await assertNoLiveBackendServer(Number(process.env.PORT) || 3000);
+
     prisma = new PrismaService();
     await prisma.$connect();
 
@@ -115,9 +179,15 @@ describe('AI Evaluation Reliability (integration, real Postgres, mock evaluator)
     testConfig = new EvaluationConfig(
       configWith({
         AI_EVALUATION_MAX_RETRIES: '2',
-        AI_EVALUATION_RETRY_BASE_DELAY_MS: '10',
-        AI_EVALUATION_RETRY_MAX_DELAY_MS: '50',
-        AI_EVALUATION_STALE_MS: '100',
+        // 500ms, not the original 10ms this was written with — a 10ms
+        // backoff window is shorter than a single real Postgres round trip
+        // on this machine, so the "not due yet" assertion below flaked
+        // (sometimes the row was already due by the time claimNext() ran
+        // again). 500ms gives real margin while keeping the whole suite
+        // fast (a few hundred ms added, once, across the whole file).
+        AI_EVALUATION_RETRY_BASE_DELAY_MS: '500',
+        AI_EVALUATION_RETRY_MAX_DELAY_MS: '2000',
+        AI_EVALUATION_STALE_MS: '3000',
         AI_EVALUATION_MAX_FILES: '3',
         AI_EVALUATION_MAX_TOTAL_INPUT_CHARS: '200',
       })
@@ -234,6 +304,9 @@ describe('AI Evaluation Reliability (integration, real Postgres, mock evaluator)
   });
 
   // 8. Evaluation eventually becomes FAILED after retry exhaustion, never fabricating a score.
+  // Explicit timeout: this loop can sleep up to retryMaxDelayMs (2000ms) per
+  // iteration across up to maxRetries+1 iterations, comfortably exceeding
+  // Jest's default 5000ms per-test timeout.
   it('becomes FAILED once retries are exhausted, never fabricating a score', async () => {
     const submission = await makeSubmission(studentAId);
     await service.createPendingEvaluation(submission.id);
@@ -254,7 +327,7 @@ describe('AI Evaluation Reliability (integration, real Postgres, mock evaluator)
     expect(row?.status).toBe('FAILED');
     expect(row?.overallScore).toBeNull();
     expect(row?.failureReason).toMatch(/Retries exhausted/);
-  });
+  }, 20_000);
 
   // 9. Submission remains intact when evaluation fails.
   it('never touches ExerciseSubmission when evaluation fails', async () => {

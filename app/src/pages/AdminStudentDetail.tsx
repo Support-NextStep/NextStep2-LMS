@@ -71,7 +71,15 @@ export default function AdminStudentDetail() {
   const coursePerformance = getCoursePerformance();
   const sortedRecords = [...performanceRecords].sort((a, b) => b.completedAt.localeCompare(a.completedAt));
 
-  const portfolio = loadPortfolio(STUDENT.name);
+  // NOTE (Real Student Identity slice): this whole page remains the
+  // pre-existing, disconnected "Admin views the one demo student" prototype
+  // — it has no real per-student backend data source at all (see
+  // getAllSubmissions()'s own localStorage-only module and ADMIN_STUDENT_ID's
+  // doc comment). Passing ADMIN_STUDENT_ID here only keeps this call
+  // type-correct after loadPortfolio() started requiring a stable id
+  // alongside the display name — it does not make this page real. See this
+  // slice's final report for why fixing that is out of scope here.
+  const portfolio = loadPortfolio(ADMIN_STUDENT_ID, STUDENT.name);
   const submissions = getAllSubmissions();
 
   return (

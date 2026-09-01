@@ -1,0 +1,8 @@
+BASELINE_BEFORE_SLICE8: {
+  "users": 128,
+  "students": 124,
+  "submissions": 34,
+  "evaluations": 32,
+  "sessionProgress": 25,
+  "activityProgress": 59
+}

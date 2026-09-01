@@ -44,7 +44,17 @@ export type PortfolioData = {
   links: PortfolioLinks;
 };
 
-const STORAGE_KEY = "nextstep2:portfolio";
+// Real Student Identity slice: this used to be one single, fixed
+// localStorage key shared by literally anyone using the same browser — not
+// scoped by student at all. Two different real accounts logging in on the
+// same machine would silently read and overwrite each other's portfolio.
+// Now scoped by the authenticated user's real database id (the one stable,
+// collision-proof identifier — see loadPortfolio/savePortfolio below). Still
+// prototype/localStorage-only (unchanged scope, see this file's own header
+// comment) — just no longer a cross-student collision.
+function portfolioStorageKey(studentId: string): string {
+  return `nextstep2:portfolio:${studentId}`;
+}
 
 /**
  * A brand-new student's portfolio — intentionally empty everywhere except a
@@ -60,10 +70,10 @@ export function getDefaultPortfolio(studentName: string): PortfolioData {
   };
 }
 
-export function loadPortfolio(studentName: string): PortfolioData {
+export function loadPortfolio(studentId: string, studentName: string): PortfolioData {
   if (typeof window === "undefined") return getDefaultPortfolio(studentName);
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(portfolioStorageKey(studentId));
     if (!raw) return getDefaultPortfolio(studentName);
     const parsed = JSON.parse(raw) as PortfolioData;
     // Guard against a shape from an older/partial save.
@@ -78,9 +88,9 @@ export function loadPortfolio(studentName: string): PortfolioData {
   }
 }
 
-export function savePortfolio(data: PortfolioData) {
+export function savePortfolio(studentId: string, data: PortfolioData) {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    window.localStorage.setItem(portfolioStorageKey(studentId), JSON.stringify(data));
   } catch {
     // Ignore write failures (e.g. private browsing) — edits just won't persist.
   }

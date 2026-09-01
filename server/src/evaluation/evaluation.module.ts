@@ -7,7 +7,20 @@ import { EvaluationConfig } from './evaluation-config';
 import { FakeEvaluatorService } from './evaluators/fake-evaluator.service';
 import { RealAiEvaluatorService } from './evaluators/real-ai-evaluator.service';
 import { HuggingFaceEvaluatorService } from './evaluators/huggingface-evaluator.service';
+import { LoadTestMockEvaluatorService } from './evaluators/load-test-mock-evaluator.service';
 import { EXERCISE_EVALUATOR } from './evaluator.interface';
+
+// ---------------------------------------------------------------------------
+// SLICE 8 LOAD TEST — TEMPORARY BINDING.
+// EXERCISE_EVALUATOR is pointed at LoadTestMockEvaluatorService instead of
+// HuggingFaceEvaluatorService for the duration of this slice's controlled
+// load testing (see that file's doc comment, and evaluation.module.ts's own
+// pre-existing comment documenting the identical pattern used by the AI
+// Evaluation Reliability slice). MUST be reverted back to
+// HuggingFaceEvaluatorService before this slice's real-Hugging-Face smoke
+// test and before this slice is considered done.
+// ---------------------------------------------------------------------------
+const USE_LOAD_TEST_MOCK_EVALUATOR = true;
 
 /**
  * AI Exercise Evaluation Slice 2.1 proved the evaluation lifecycle/API
@@ -46,7 +59,11 @@ import { EXERCISE_EVALUATOR } from './evaluator.interface';
     FakeEvaluatorService,
     RealAiEvaluatorService,
     HuggingFaceEvaluatorService,
-    { provide: EXERCISE_EVALUATOR, useExisting: HuggingFaceEvaluatorService },
+    LoadTestMockEvaluatorService,
+    {
+      provide: EXERCISE_EVALUATOR,
+      useExisting: USE_LOAD_TEST_MOCK_EVALUATOR ? LoadTestMockEvaluatorService : HuggingFaceEvaluatorService,
+    },
   ],
   exports: [EvaluationService, EvaluationConfig],
 })

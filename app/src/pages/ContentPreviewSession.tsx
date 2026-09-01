@@ -121,11 +121,15 @@ export default function ContentPreviewSession({ role }: { role: "author" | "revi
 
   // Preview is read-only with respect to student records — these callbacks
   // never touch progress.tsx, performance.ts, or exerciseSubmissions.ts.
-  function handleCompleteSession() {
+  async function handleCompleteSession() {
     // Intentionally a no-op: SessionWorkspace still shows the completion
     // screen locally (so the reviewer/author can verify it), but nothing is
-    // persisted anywhere.
+    // persisted anywhere. Resolves immediately (never rejects) — preview
+    // never talks to the real Progress endpoint.
   }
+
+  /** Intentionally a no-op, matching handleCompleteSession above — Learning/Video Check/Practice completion in preview is never persisted anywhere. */
+  async function handleCompleteActivity() {}
 
   async function handleSubmitExercise(files: CodeFile[], language: string): Promise<SubmissionSummary> {
     void files;
@@ -135,7 +139,17 @@ export default function ContentPreviewSession({ role }: { role: "author" | "revi
       id: `preview-${Date.now()}-${attemptCounter.current}`,
       attemptNumber: attemptCounter.current,
       submittedAt: new Date().toISOString(),
+      // Deliberately no `evaluation` — SessionWorkspace's Student Exercise
+      // Evaluation UI (polling, "Your Submission" detail) only ever
+      // activates for a submission whose summary carries one, so preview
+      // never shows fabricated AI results here.
     };
+  }
+
+  /** Never actually called — see handleSubmitExercise()'s comment above; preview's own submissions never carry `evaluation`, so SessionWorkspace never invokes this. Throws loudly rather than faking a result if that assumption is ever wrong. */
+  async function handleFetchEvaluation(submissionId: string): Promise<never> {
+    void submissionId;
+    throw new Error("Evaluation fetch is not available in Preview.");
   }
 
   return renderInLayout(
@@ -164,8 +178,11 @@ export default function ContentPreviewSession({ role }: { role: "author" | "revi
             nextSessionId={nextSessionId}
             greetingName={account.name.split(" ")[0] ?? "there"}
             initialSubmissions={[]}
+            initialActivityProgress={[]}
             onCompleteSession={handleCompleteSession}
+            onCompleteActivity={handleCompleteActivity}
             onSubmitExercise={handleSubmitExercise}
+            onFetchEvaluation={handleFetchEvaluation}
             backHref={backTo}
             backLabel={backLabel}
             getNextSessionHref={(nextId) => `${role === "reviewer" ? "/review/preview" : "/content/preview"}/${packageId}/${courseId}/${subjectId}/${nextId}`}

@@ -1,0 +1,170 @@
+[
+  {
+    "wave": 0,
+    "atMs": 6062,
+    "waveMs": 6061,
+    "overall": {
+      "total": 520,
+      "success": 520,
+      "errors": 0,
+      "errors4xx": 0,
+      "errors5xx": 0,
+      "p50": 8,
+      "p95": 846,
+      "p99": 1999,
+      "max": 2197
+    },
+    "pgBefore": {
+      "active": 1,
+      "idle": 3,
+      "total": 4
+    },
+    "pgAfter": {
+      "active": 1,
+      "idle": 7,
+      "total": 8
+    },
+    "rssBeforeMb": 82,
+    "rssAfterMb": 101
+  },
+  {
+    "wave": 1,
+    "atMs": 85206,
+    "waveMs": 5205,
+    "overall": {
+      "total": 440,
+      "success": 419,
+      "errors": 21,
+      "errors4xx": 21,
+      "errors5xx": 0,
+      "p50": 7,
+      "p95": 963,
+      "p99": 1825,
+      "max": 1958
+    },
+    "pgBefore": {
+      "active": 1,
+      "idle": 7,
+      "total": 8
+    },
+    "pgAfter": {
+      "active": 1,
+      "idle": 7,
+      "total": 8
+    },
+    "rssBeforeMb": 107,
+    "rssAfterMb": 107
+  },
+  {
+    "wave": 2,
+    "atMs": 166500,
+    "waveMs": 6491,
+    "overall": {
+      "total": 520,
+      "success": 520,
+      "errors": 0,
+      "errors4xx": 0,
+      "errors5xx": 0,
+      "p50": 8,
+      "p95": 1663,
+      "p99": 2787,
+      "max": 2932
+    },
+    "pgBefore": {
+      "active": 1,
+      "idle": 7,
+      "total": 8
+    },
+    "pgAfter": {
+      "active": 1,
+      "idle": 10,
+      "total": 11
+    },
+    "rssBeforeMb": 285,
+    "rssAfterMb": 121
+  },
+  {
+    "wave": 3,
+    "atMs": 245870,
+    "waveMs": 5846,
+    "overall": {
+      "total": 440,
+      "success": 415,
+      "errors": 25,
+      "errors4xx": 25,
+      "errors5xx": 0,
+      "p50": 7,
+      "p95": 1094,
+      "p99": 2340,
+      "max": 2540
+    },
+    "pgBefore": {
+      "active": 1,
+      "idle": 10,
+      "total": 11
+    },
+    "pgAfter": {
+      "active": 1,
+      "idle": 10,
+      "total": 11
+    },
+    "rssBeforeMb": 121,
+    "rssAfterMb": 122
+  },
+  {
+    "wave": 4,
+    "atMs": 325756,
+    "waveMs": 5731,
+    "overall": {
+      "total": 520,
+      "success": 520,
+      "errors": 0,
+      "errors4xx": 0,
+      "errors5xx": 0,
+      "p50": 7,
+      "p95": 880,
+      "p99": 1995,
+      "max": 2273
+    },
+    "pgBefore": {
+      "active": 1,
+      "idle": 10,
+      "total": 11
+    },
+    "pgAfter": {
+      "active": 1,
+      "idle": 10,
+      "total": 11
+    },
+    "rssBeforeMb": 121,
+    "rssAfterMb": 121
+  },
+  {
+    "wave": 5,
+    "atMs": 405607,
+    "waveMs": 5570,
+    "overall": {
+      "total": 440,
+      "success": 416,
+      "errors": 24,
+      "errors4xx": 24,
+      "errors5xx": 0,
+      "p50": 7,
+      "p95": 1129,
+      "p99": 2233,
+      "max": 2441
+    },
+    "pgBefore": {
+      "active": 1,
+      "idle": 10,
+      "total": 11
+    },
+    "pgAfter": {
+      "active": 1,
+      "idle": 10,
+      "total": 11
+    },
+    "rssBeforeMb": 84,
+    "rssAfterMb": 100
+  }
+]

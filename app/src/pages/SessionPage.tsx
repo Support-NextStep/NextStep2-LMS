@@ -3,8 +3,9 @@ import { Link, useParams } from "react-router-dom";
 import StudentLayout from "../components/StudentLayout";
 import SessionWorkspace, { type SubmissionSummary } from "../components/SessionWorkspace";
 import { defaultFileName, type CodeFile } from "../data/practiceExecution";
-import { fetchSubmissionsForSession, submitExercise } from "../data/exerciseSubmissionsApi";
-import { COURSE, STUDENT } from "../data/mock";
+import { fetchEvaluationForSubmission, fetchSubmissionsForSession, submitExercise } from "../data/exerciseSubmissionsApi";
+import { completeActivity, fetchActivityProgress, type TrackedActivityKey } from "../data/activityProgressApi";
+import { COURSE } from "../data/mock";
 import { useCourseData } from "../data/progress";
 import { getSessionContent } from "../data/sessionContent";
 import { ensureBackendPublishedContentFetched } from "../data/backendPublishedContent";
@@ -63,7 +64,31 @@ export default function SessionPage() {
     };
   }, [sessionId]);
 
-  const { getSessionContext, completeSession, recordSessionPerformance } = useCourseData();
+  // Server-Side Session Activity Progress slice: this student's real,
+  // backend-persisted Learning/Video Check/Practice completion for this
+  // session (see ../data/activityProgressApi.ts) — same "reset to [] on
+  // session change, fail soft on error" pattern as initialSubmissions above.
+  // SessionWorkspace re-syncs its own local `persistedActivities` state
+  // whenever this array's reference changes.
+  const [initialActivityProgress, setInitialActivityProgress] = useState<TrackedActivityKey[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    setInitialActivityProgress([]);
+    fetchActivityProgress(sessionId)
+      .then((rows) => {
+        if (!cancelled) setInitialActivityProgress(rows.map((r) => r.activityType));
+      })
+      .catch(() => {
+        // Fail soft — the student can still complete activities in this
+        // visit; a transient failure to *list* prior completions shouldn't
+        // block the workspace from rendering.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  const { getSessionContext, completeSession, recordSessionPerformance, currentUser } = useCourseData();
   const context = getSessionContext(sessionId);
   const content = getSessionContent(sessionId, {
     title: context?.session.title ?? "Session",
@@ -84,11 +109,32 @@ export default function SessionPage() {
   }
 
   const { subject, session, sessionNumber, totalSessions, progress, nextSession } = context;
-  const firstName = STUDENT.name.split(" ")[0];
+  // Real Student Identity slice — the authenticated user's real first name
+  // (GET /auth/me), never mock.ts's hardcoded STUDENT. Blank while loading
+  // or logged out; SessionWorkspace's "Nice progress, {greetingName}!" reads
+  // fine either way (see its own completion-screen copy).
+  const firstName = currentUser?.name.split(" ")[0] ?? "";
 
-  function handleCompleteSession(activities: SessionActivitiesInput) {
-    completeSession(sessionId);
+  // completeSession() now calls the real backend and only resolves once the
+  // completion is durably recorded server-side — awaited here so a
+  // rejection (network failure, or the backend's own validation) propagates
+  // up to SessionWorkspace's handleCompleteSession instead of silently
+  // succeeding. recordSessionPerformance (the separate, still-local score
+  // display) only runs once that backend completion is confirmed, so it
+  // never shows a "completed" performance record for a session the backend
+  // didn't actually accept.
+  async function handleCompleteSession(activities: SessionActivitiesInput) {
+    await completeSession(sessionId);
     recordSessionPerformance(sessionId, subject.id, activities);
+  }
+
+  // The backend derives studentId (from the JWT) and validates
+  // activityType/session — this only ever sends what's actually needed
+  // (nothing, or the answered checkpoint ids for videoCheck). See
+  // ../data/activityProgressApi.ts and SessionWorkspace's own doc comment
+  // on why a failure here is swallowed rather than shown to the student.
+  async function handleCompleteActivity(activityType: TrackedActivityKey, payload?: { answeredCheckpointIds?: string[] }) {
+    await completeActivity(sessionId, activityType, payload);
   }
 
   // The backend derives studentId (from the authenticated session), the
@@ -116,8 +162,11 @@ export default function SessionPage() {
         nextSessionId={nextSession?.id}
         greetingName={firstName}
         initialSubmissions={initialSubmissions}
+        initialActivityProgress={initialActivityProgress}
         onCompleteSession={handleCompleteSession}
+        onCompleteActivity={handleCompleteActivity}
         onSubmitExercise={handleSubmitExercise}
+        onFetchEvaluation={(submissionId) => fetchEvaluationForSubmission(sessionId, submissionId)}
         backHref={`/my-course/subject/${subject.id}`}
         backLabel="Back to Subject"
         getNextSessionHref={(nextId) => `/session/${nextId}`}

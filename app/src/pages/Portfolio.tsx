@@ -1,8 +1,8 @@
-import { useState, type ChangeEvent } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import { Link } from "react-router-dom";
 import StudentLayout from "../components/StudentLayout";
 import Button from "../components/Button";
-import { COURSE, STUDENT } from "../data/mock";
+import { COURSE } from "../data/mock";
 import { useCourseData } from "../data/progress";
 import {
   createEmptyProject,
@@ -103,17 +103,38 @@ function TextAreaField({
 }
 
 export default function Portfolio() {
-  const { subjects, courseProgress } = useCourseData();
-  const [portfolio, setPortfolio] = useState<PortfolioData>(() => loadPortfolio(STUDENT.name));
+  const { subjects, courseProgress, currentUser } = useCourseData();
+  // Real Student Identity slice — portfolio ownership/default profile name
+  // now comes from the authenticated user (GET /auth/me), never mock.ts's
+  // hardcoded STUDENT. Starts null and is only loaded once currentUser
+  // resolves, so this never briefly shows (or saves into) another account's
+  // portfolio — see ../data/portfolio.ts's per-student storage key.
+  const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
+  useEffect(() => {
+    if (currentUser) setPortfolio(loadPortfolio(currentUser.id, currentUser.name));
+  }, [currentUser]);
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<PortfolioData | null>(null);
   const [skillsInput, setSkillsInput] = useState<Record<string, string>>({});
 
+  // Mirrors every other role's `if (!checked || !account) return null;`
+  // loading convention (see useRequireAdminAccount.ts etc.) — nothing is
+  // rendered until the real authenticated user (and therefore their own,
+  // correctly-scoped portfolio) has actually loaded. Never a fabricated
+  // placeholder identity in the meantime.
+  if (!currentUser || !portfolio) return null;
+  // Narrowed, stable references for the closures below — TypeScript's
+  // control-flow narrowing from the guard above doesn't extend into nested
+  // function declarations, so these give startEditing/saveEditing a type
+  // that's actually known non-null rather than requiring an assertion.
+  const authenticatedUser = currentUser;
+  const loadedPortfolio = portfolio;
+
   function startEditing() {
-    setDraft(portfolio);
+    setDraft(loadedPortfolio);
     const inputs: Record<string, string> = {};
     for (const category of SKILL_CATEGORIES) {
-      const existing = portfolio.skills.find((g) => g.category === category);
+      const existing = loadedPortfolio.skills.find((g) => g.category === category);
       inputs[category] = existing ? existing.skills.join(", ") : "";
     }
     setSkillsInput(inputs);
@@ -142,7 +163,7 @@ export default function Portfolio() {
 
     const next: PortfolioData = { ...draft, skills, projects };
     setPortfolio(next);
-    savePortfolio(next);
+    savePortfolio(authenticatedUser.id, next);
     setDraft(null);
     setIsEditing(false);
   }
