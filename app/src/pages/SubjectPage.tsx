@@ -55,9 +55,8 @@ function SessionRow({ session, index }: { session: Session; index: number }) {
 
   return (
     <div
-      className={`flex flex-col gap-4 rounded-xl border p-5 sm:flex-row sm:items-center sm:gap-6 sm:p-6 ${
-        current ? "border-brand-200 bg-brand-50/40" : "border-slate-200 bg-white"
-      }`}
+      className={`flex flex-col gap-4 rounded-xl border p-5 sm:flex-row sm:items-center sm:gap-6 sm:p-6 ${current ? "border-brand-200 bg-brand-50/40" : "border-slate-200 bg-white"
+        }`}
     >
       <div className="flex items-start gap-4 sm:flex-1 sm:items-center">
         <span
@@ -114,7 +113,7 @@ export default function SubjectPage() {
   if (!subject) {
     return (
       <StudentLayout>
-        <div className="mx-auto flex max-w-5xl flex-col items-center gap-3 py-16 text-center">
+        <div className="mx-auto flex  flex-col items-center gap-3 py-16 text-center">
           <h1 className="text-xl font-semibold text-navy-500">Subject not found</h1>
           <Link to="/my-course" className="text-sm font-semibold text-brand-500 hover:text-brand-600">
             Back to My Course
@@ -133,7 +132,7 @@ export default function SubjectPage() {
 
   return (
     <StudentLayout>
-      <div className="mx-auto flex max-w-5xl flex-col gap-8">
+      <div className="mx-auto flex  flex-col gap-8">
         {/* Header */}
         <div>
           <h1 className="text-[28px] font-bold tracking-tight text-navy-500 sm:text-3xl">

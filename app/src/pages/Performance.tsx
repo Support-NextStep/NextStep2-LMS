@@ -83,7 +83,7 @@ export default function Performance() {
 
   return (
     <StudentLayout>
-      <div className="mx-auto flex max-w-5xl flex-col gap-8">
+      <div className="mx-auto flex  flex-col gap-8">
         {/* 1. Header */}
         <div>
           <h1 className="text-[28px] font-bold tracking-tight text-navy-500 sm:text-3xl">Performance</h1>

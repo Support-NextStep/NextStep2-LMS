@@ -48,9 +48,8 @@ function SubjectCard({ subject, index }: { subject: Subject; index: number }) {
 
   return (
     <div
-      className={`flex h-full flex-col gap-4 rounded-xl border border-slate-200 bg-white p-5 sm:p-6 ${
-        locked ? "opacity-60" : ""
-      }`}
+      className={`flex h-full flex-col gap-4 rounded-xl border border-slate-200 bg-white p-5 sm:p-6 ${locked ? "opacity-60" : ""
+        }`}
     >
       <div className="flex items-center justify-between">
         <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${status.numberClass}`}>
@@ -107,7 +106,7 @@ export default function MyCourse() {
 
   return (
     <StudentLayout>
-      <div className="mx-auto flex max-w-5xl flex-col gap-8">
+      <div className="mx-auto flex  flex-col gap-8">
         {/* Heading */}
         <div>
           <h1 className="text-[28px] font-bold tracking-tight text-navy-500 sm:text-3xl">My Course</h1>

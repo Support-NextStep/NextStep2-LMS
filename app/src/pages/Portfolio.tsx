@@ -191,7 +191,7 @@ export default function Portfolio() {
 
   return (
     <StudentLayout>
-      <div className="mx-auto flex max-w-5xl flex-col gap-8">
+      <div className="mx-auto flex  flex-col gap-8">
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>

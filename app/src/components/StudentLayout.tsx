@@ -9,7 +9,7 @@ const NAV_ITEMS: AppShellNavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: IconDashboard },
   { label: "My Course", to: "/my-course", icon: IconCourse },
   { label: "Performance", to: "/performance", icon: IconPerformance },
-  { label: "Portfolio", to: "/portfolio", icon: IconPortfolio },
+  // { label: "Portfolio", to: "/portfolio", icon: IconPortfolio },
 ];
 
 export default function StudentLayout({ children }: { children: ReactNode }) {

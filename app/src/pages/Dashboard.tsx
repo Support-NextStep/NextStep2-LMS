@@ -55,11 +55,10 @@ function SubjectCard({ subject, index }: { subject: Subject; index: number }) {
 
   const card = (
     <div
-      className={`flex h-full flex-col gap-4 rounded-xl border bg-white p-5 transition-all ${
-        locked
+      className={`flex h-full flex-col gap-4 rounded-xl border bg-white p-5 transition-all ${locked
           ? "border-slate-200 opacity-60"
           : "border-slate-200 hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md hover:shadow-navy-500/5"
-      }`}
+        }`}
     >
       <div className="flex items-center justify-between">
         <span
@@ -109,7 +108,7 @@ export default function Dashboard() {
 
   return (
     <StudentLayout>
-      <div className="mx-auto flex max-w-5xl flex-col gap-8">
+      <div className="mx-auto flex  flex-col gap-8">
         {/* 1. Welcome */}
         <div>
           <h1 className="text-[28px] font-bold tracking-tight text-navy-500 sm:text-3xl">

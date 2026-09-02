@@ -98,7 +98,7 @@ export default function SessionPage() {
   if (!context) {
     return (
       <StudentLayout>
-        <div className="mx-auto flex max-w-5xl flex-col items-center gap-3 py-16 text-center">
+        <div className="mx-auto flex  flex-col items-center gap-3 py-16 text-center">
           <h1 className="text-xl font-semibold text-navy-500">Session not found</h1>
           <Link to="/my-course" className="text-sm font-semibold text-brand-500 hover:text-brand-600">
             Back to My Course
