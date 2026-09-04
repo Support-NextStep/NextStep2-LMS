@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -7,6 +8,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/types/jwt-payload';
 import { SubmissionsService } from './submissions.service';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
+import { StudentThrottlerGuard } from '../common/guards/student-throttler.guard';
 
 /**
  * Student-facing Exercise submissions — the first backend routes ever
@@ -21,6 +23,8 @@ export class SubmissionsController {
   constructor(private readonly submissionsService: SubmissionsService) {}
 
   @Post()
+  @UseGuards(StudentThrottlerGuard)
+  @Throttle({ student: { limit: 20, ttl: 60 * 60 * 1000 } })
   submit(@Param('sessionId') sessionId: string, @Body() dto: CreateSubmissionDto, @CurrentUser() user: JwtPayload) {
     return this.submissionsService.submit(sessionId, user.sub, dto.files);
   }

@@ -68,29 +68,67 @@ export async function loginAsAdmin(page: Page, email = "admin@nextstep2.dev") {
   await expect(page).toHaveURL(/\/admin\/dashboard/);
 }
 
-export type StoredPackage = { id: string; fileName: string; status: string };
-
-/** Reads the raw contentPackages localStorage record — used to get a package's id for direct navigation, and to assert persisted status without depending on UI text. */
-export async function readStoredPackages(page: Page): Promise<StoredPackage[]> {
-  return page.evaluate(() => {
-    const raw = window.localStorage.getItem("nextstep2:contentPackages");
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as { id: string; fileName: string; status: string }[];
-    return parsed.map((p) => ({ id: p.id, fileName: p.fileName, status: p.status }));
-  });
+/**
+ * Day 5 follow-up: real backend replacement for the retired
+ * `readStoredPackages()` (it read a `nextstep2:contentPackages` localStorage
+ * key nothing has written since the content-authoring-backend phase moved
+ * ContentPackage into Postgres — see PackagesService). Calls the real
+ * `GET /packages/:id` endpoint directly via `page.request`, which shares
+ * cookies with whichever role (Content Author, Reviewer, or Admin) is
+ * currently logged in on `page` — matching the guard on that route
+ * (`@Roles(CONTENT_AUTHOR, CONTENT_REVIEWER, ADMIN)`), so this works
+ * whichever of the two roles the calling test is currently authenticated
+ * as, exactly like the UI actions around it. Returns the real Prisma
+ * `PackageStatus` enum string (`DRAFT` / `READY_FOR_REVIEW` /
+ * `CHANGES_REQUESTED` / `APPROVED` / `PUBLISHED`), not the old lowercase
+ * localStorage naming.
+ */
+export async function getPackageStatus(page: Page, packageId: string): Promise<string> {
+  const res = await page.request.get(`http://localhost:3000/packages/${packageId}`);
+  if (!res.ok()) throw new Error(`GET /packages/${packageId} failed with status ${res.status()}`);
+  const body = (await res.json()) as { status: string };
+  return body.status;
 }
 
 /**
- * Authored packages store the session title as `fileName` (see
- * toPackageRecord() in src/data/authoredSession.ts) — the same field ZIP
- * imports used for the uploaded file's name — so this lookup works
- * unchanged for both.
+ * Registers a fresh, disposable real student account and logs in as them —
+ * for tests that need to exercise real, JwtAuthGuard + Roles(STUDENT)-gated
+ * backend endpoints (Exercise submissions since Day 2, activity/session
+ * progress since the Server-Side Activity Progress slice, AI Tutor since
+ * Day 3). Content Author/Reviewer sessions cannot call any of these — they
+ * are a different role entirely, not "logged in as nobody in particular."
+ * Returns the generated email, in case a test wants to look the account up
+ * afterward (e.g. for its own cleanup).
  */
-export async function getPackageIdByFileName(page: Page, fileName: string): Promise<string> {
-  const all = await readStoredPackages(page);
-  const match = all.find((p) => p.fileName === fileName);
-  if (!match) throw new Error(`No stored content package found with fileName "${fileName}"`);
-  return match.id;
+export async function loginAsDisposableStudent(page: Page, namePrefix = "test-student"): Promise<string> {
+  const rand = Math.random().toString(36).slice(2, 8);
+  const email = `${namePrefix}-${rand}@test.local`;
+  const password = "Password123!";
+  await page.request.post("http://localhost:3000/auth/register", {
+    data: { email, password, name: "Playwright Test Student" },
+  });
+  await page.goto("/login");
+  await page.fill('input[type="email"]', email);
+  await page.fill('input[type="password"]', password);
+  await page.click('button[type="submit"]');
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 10000 });
+  return email;
+}
+
+/**
+ * Real backend replacement for reading a package's published content via
+ * the old `readPackageRecord()`/localStorage record (same retirement as
+ * `getPackageStatus` above) — the real, public, canonical resolution is
+ * `GET /sessions/:sessionId/content` (see ContentService.getPublishedContentForSession),
+ * the same endpoint the actual Student app itself calls. Returns `null` if
+ * nothing is currently published for that session (a 404), matching the old
+ * helper's own "no record found" contract.
+ */
+export async function getPublishedSessionContent(page: Page, sessionId: string): Promise<Record<string, unknown> | null> {
+  const res = await page.request.get(`http://localhost:3000/sessions/${sessionId}/content`);
+  if (res.status() === 404) return null;
+  if (!res.ok()) throw new Error(`GET /sessions/${sessionId}/content failed with status ${res.status()}`);
+  return res.json();
 }
 
 /** Ticks every review checklist box on the Content Package Detail page (currently open). */
@@ -105,8 +143,16 @@ export async function checkAllReviewBoxes(page: Page) {
     "Exercises reviewed",
     "Content is ready for students",
   ];
+  // ContentPackageDetail.tsx pre-populates the checklist from the package's
+  // latest review (see its own `if (latest.checklist) setChecklist(...)`) —
+  // a second review round (after Request Changes -> resubmit) starts with
+  // whatever was checked last time already checked. Blindly clicking every
+  // label would toggle those back OFF; only click a box that isn't already checked.
   for (const label of labels) {
-    await page.getByText(label, { exact: true }).click();
+    const checkbox = page.getByRole("checkbox", { name: label });
+    if (!(await checkbox.isChecked())) {
+      await page.getByText(label, { exact: true }).click();
+    }
   }
 }
 
@@ -154,8 +200,17 @@ export async function openAuthoringWorkspace(
     else await newVersionBtn.click();
   } else {
     await page.getByRole("button", { name: "Add Session" }).click();
-    const addForm = page.getByLabel("Session Title").locator("xpath=ancestor::div[contains(@class,'rounded-xl')][1]");
+    // ContentSubjectDetail.tsx's "Add a New Session" panel is a real <form>
+    // element (correctly so — it's an actual form, not a session-row card),
+    // not a <div> — scope by the form itself (found via its own heading)
+    // rather than an ancestor-div XPath that can never match a <form>.
+    const addForm = page.locator("form").filter({ hasText: "Add a New Session" });
     await addForm.getByLabel("Session Title").fill(opts.sessionTitle);
+    // Also mandatory for "Start Authoring" to enable (ContentSubjectDetail.tsx:
+    // disabled={... || !newSessionTitle.trim() || !newSessionDesc.trim()}) —
+    // this is a throwaway value only; fillMandatorySections() below fills the
+    // real, final Session Description inside the authoring workspace itself.
+    await addForm.getByLabel("Session Description").fill("Fixture session for automated tests.");
     await addForm.getByRole("button", { name: "Start Authoring" }).click();
   }
   await expect(page).toHaveURL(/\/author$/);
@@ -174,17 +229,27 @@ export async function openAuthoringWorkspace(
 export async function fillMandatorySections(page: Page, opts: { objective: string; description?: string }) {
   await goToAuthoringSection(page, "Session Information");
   await page.getByLabel("Session Description").fill(opts.description ?? "Fixture session for automated tests.");
-  await page.getByLabel("Learning Objective").fill(opts.objective);
 
+  // Learning Objective lives on the Learning Content panel, not Session
+  // Information — this fixture previously tried to fill it without
+  // navigating there first, which only worked by accident when both fields
+  // briefly shared one panel; they no longer do.
   await goToAuthoringSection(page, "Learning Content");
+  await page.getByLabel("Learning Objective").fill(opts.objective);
+  // Each hybrid section defaults to "Manual Entry" mode — the DOCX file
+  // input doesn't exist in the DOM at all until "Import DOCX" is clicked
+  // (HybridUploadPanel.tsx only renders it when mode === "docx").
+  await page.getByRole("button", { name: "Import DOCX" }).click();
   await page.locator('input[type="file"]').setInputFiles(await docxFixtureFile("learning.docx", learningContentParagraphs()));
   await expect(page.getByText(/Imported from document/)).toBeVisible();
 
   await goToAuthoringSection(page, "Practice");
+  await page.getByRole("button", { name: "Import DOCX" }).click();
   await page.locator('input[type="file"]').setInputFiles(await docxFixtureFile("practice.docx", practiceParagraphs()));
   await expect(page.getByText(/Imported from document/)).toBeVisible();
 
   await goToAuthoringSection(page, "Exercise");
+  await page.getByRole("button", { name: "Import DOCX" }).click();
   await page.locator('input[type="file"]').setInputFiles(await docxFixtureFile("exercise.docx", exerciseParagraphs()));
   await expect(page.getByText(/Imported from document/)).toBeVisible();
 }
@@ -260,11 +325,17 @@ export async function authorAndSetStatus(
   await fillMandatorySections(page, { objective: opts.objective });
 
   if (target === "draft") {
-    // "draft" is the status a fresh submission already has — it IS the
-    // "pending review" state, identical to before the role split.
-    await page.getByRole("button", { name: "Save Draft" }).click();
-    await expect(page.getByText(/Last saved/)).toBeVisible();
-    return getPackageIdByFileName(page, opts.sessionTitle);
+    // Historical naming only — "draft" here means the pre-role-split
+    // "pending review" state, NOT the real backend's literal DRAFT enum
+    // value. AdminContent.tsx deliberately never shows literal-DRAFT
+    // packages at all (they're the author's own, not yet an admin-visible
+    // fact — see its own doc comment); the real, current status this
+    // branch must produce is READY_FOR_REVIEW ("Pending Review" in the
+    // Admin UI), which is what both call sites' assertions actually check.
+    // getPackageIdByFileName (the old localStorage-record lookup this used
+    // to return) was retired in the Day 5 localStorage cleanup — the real
+    // replacement is submitForReview()'s own return value.
+    return submitForReview(page);
   }
 
   const id = await submitForReview(page);

@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AdminLayout from "../components/AdminLayout";
 import { useRequireAdminAccount } from "../hooks/useRequireAdminAccount";
-import { useCourseData } from "../data/progress";
-import { getAllStudentIds } from "../data/adminStudents";
 import { listReviewQueue } from "../data/contentReviewApi";
+import { listCourses } from "../data/mock";
+import { fetchAdminDashboardCounts, type AdminDashboardCounts } from "../data/adminApi";
 import type { PackageSummary } from "../data/authoredSessionApi";
 
 function formatDateTime(iso: string) {
@@ -29,8 +29,9 @@ type ActivityItem = { at: string; label: string; detail?: string };
 
 export default function AdminDashboard() {
   const { account, checked } = useRequireAdminAccount();
-  const { performanceRecords, getSessionContext } = useCourseData();
   const [packages, setPackages] = useState<PackageSummary[] | null>(null);
+  const [studentCounts, setStudentCounts] = useState<AdminDashboardCounts | null>(null);
+  const [coursesCount, setCoursesCount] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,24 +43,38 @@ export default function AdminDashboard() {
         if (!cancelled) setPackages([]);
       }
     })();
+    (async () => {
+      try {
+        const counts = await fetchAdminDashboardCounts();
+        if (!cancelled) setStudentCounts(counts);
+      } catch {
+        if (!cancelled) setStudentCounts({ studentsCount: 0, activeStudentsCount: 0 });
+      }
+    })();
+    (async () => {
+      try {
+        const courses = await listCourses();
+        if (!cancelled) setCoursesCount(courses.length);
+      } catch {
+        if (!cancelled) setCoursesCount(0);
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  if (!checked || !account || packages === null) return null;
+  if (!checked || !account || packages === null || studentCounts === null || coursesCount === null) return null;
 
-  // ---- Dashboard metrics — every number below is derived from real prototype data, never fabricated. ----
-  const studentsCount = getAllStudentIds().length;
-  // "Active" is deliberately conservative: a student who has actually completed
-  // at least one session through the real workspace (a performance record
-  // exists), not just the seeded demo baseline in mock.ts.
-  const activeStudentsCount = performanceRecords.length > 0 ? studentsCount : 0;
-  // This prototype has exactly one real course (COURSE in mock.ts) — the
-  // student experience isn't structured around multiple courses yet. See
-  // Content Overview for the (possibly larger) set of courseIds that appear
-  // across submitted content packages.
-  const coursesCount = 1;
+  // ---- Dashboard metrics — every number below is real, backend-derived
+  // data (GET /admin/dashboard, GET /courses, GET /review/packages), never
+  // fabricated. See AdminService.getStudentCounts() for exactly what
+  // "active" means here: a student with at least one real, backend-recorded
+  // row of activity anywhere (session progress, activity progress, or an
+  // exercise submission) — the most conservative, honest definition the
+  // current schema supports (there is no account status/recency concept to
+  // draw on instead). ----
+  const { studentsCount, activeStudentsCount } = studentCounts;
   const publishedSessionsCount = packages.filter((p) => p.status === "PUBLISHED").length;
   const draftPackageCount = packages.filter((p) => p.status === "READY_FOR_REVIEW").length;
   const changesRequestedPackageCount = packages.filter((p) => p.status === "CHANGES_REQUESTED").length;
@@ -82,14 +97,14 @@ export default function AdminDashboard() {
   for (const pkg of packages) {
     activity.push({ at: pkg.updatedAt, label: ACTIVITY_LABEL[pkg.status], detail: pkg.fileName });
   }
-  for (const record of performanceRecords) {
-    const context = getSessionContext(record.sessionId);
-    activity.push({
-      at: record.completedAt,
-      label: "Student completed a session",
-      detail: context?.session.title ?? record.sessionId,
-    });
-  }
+  // A real cross-student "student completed a session" feed would need a
+  // new aggregate activity-log endpoint (query every student's
+  // StudentSessionProgress, ordered by completedAt) — out of today's
+  // explicit scope (Build ONLY: roster / detail / submission+evaluation
+  // visibility / dashboard student+course metrics). The previous version of
+  // this loop read the CURRENTLY LOGGED IN admin's own localStorage
+  // performanceRecords, which is never any real student's data — removed
+  // rather than left in place fabricating activity that never happened.
   const recentActivity = activity.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 8);
 
   const hasAttentionItems = draftPackageCount > 0 || changesRequestedPackageCount > 0;

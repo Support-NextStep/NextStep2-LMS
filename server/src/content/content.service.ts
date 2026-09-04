@@ -111,6 +111,31 @@ export class ContentService {
    * frontend's existing fallback chain: published -> curated -> generated)
    * decides what that means; this method never fabricates a substitute.
    */
+  /**
+   * The course/subject/session title+description "breadcrumb" for a
+   * session — added for AI Tutor (Day 3), which needs these alongside
+   * getPublishedContentForSession() to build lesson context, but has no
+   * other reason to join Session -> Subject -> Course. Returns null if the
+   * session id doesn't exist at all (same "doesn't exist" contract as
+   * getPublishedContentForSession() returning null for "nothing published"
+   * — the caller decides what that means).
+   */
+  async getSessionWithBreadcrumb(
+    sessionId: string
+  ): Promise<{ title: string; description: string; subjectTitle: string; courseTitle: string } | null> {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      include: { subject: { include: { course: true } } },
+    });
+    if (!session) return null;
+    return {
+      title: session.title,
+      description: session.description,
+      subjectTitle: session.subject.title,
+      courseTitle: session.subject.course.title,
+    };
+  }
+
   async getPublishedContentForSession(sessionId: string): Promise<PublishedSessionContent | null> {
     const publication = await this.prisma.publication.findFirst({
       where: { sessionId, supersededAt: null },

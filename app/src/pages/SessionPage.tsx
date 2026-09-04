@@ -4,6 +4,7 @@ import StudentLayout from "../components/StudentLayout";
 import SessionWorkspace, { type SubmissionSummary } from "../components/SessionWorkspace";
 import { defaultFileName, type CodeFile } from "../data/practiceExecution";
 import { fetchEvaluationForSubmission, fetchSubmissionsForSession, submitExercise } from "../data/exerciseSubmissionsApi";
+import { askAiTutor } from "../data/aiTutorApi";
 import { completeActivity, fetchActivityProgress, type TrackedActivityKey } from "../data/activityProgressApi";
 import { COURSE } from "../data/mock";
 import { useCourseData } from "../data/progress";
@@ -146,6 +147,14 @@ export default function SessionPage() {
     return submitExercise(sessionId, submitted);
   }
 
+  // AI Need Help / AI Tutor (Day 3) — the backend derives studentId (from
+  // the JWT) and the lesson context (from this session's own currently-
+  // published ContentVersion) itself; this only ever sends the student's
+  // message. See ../data/aiTutorApi.ts.
+  async function handleAskAiTutor(message: string) {
+    return askAiTutor(sessionId, message);
+  }
+
   return (
     <StudentLayout>
       <SessionWorkspace
@@ -167,6 +176,7 @@ export default function SessionPage() {
         onCompleteActivity={handleCompleteActivity}
         onSubmitExercise={handleSubmitExercise}
         onFetchEvaluation={(submissionId) => fetchEvaluationForSubmission(sessionId, submissionId)}
+        onAskAiTutor={handleAskAiTutor}
         backHref={`/my-course/subject/${subject.id}`}
         backLabel="Back to Subject"
         getNextSessionHref={(nextId) => `/session/${nextId}`}

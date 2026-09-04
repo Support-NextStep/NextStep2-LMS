@@ -226,6 +226,17 @@ export class EvaluationService {
    * PackagesService.getOwnedPackage(): a submission that doesn't exist (or
    * isn't in the requested session) 404s; one that exists but belongs to a
    * different student 403s.
+   *
+   * DAY 2 fix: returns an explicit, whitelisted shape rather than the raw
+   * Prisma row. `failureReason` (may echo provider/config detail — e.g.
+   * "check the configured HF_TOKEN") and `providerName`/`retryCount`/
+   * `nextAttemptAt`/`attemptedAt`/`evaluatedAt` (internal worker/job-queue
+   * bookkeeping) never leave the server now — previously they were present
+   * in the raw JSON response even though the frontend never read them
+   * (confirmed: no `.failureReason`/`.providerName` property access
+   * anywhere in app/src). This is a response-shape fix only; the stored
+   * ExerciseEvaluation row, retry/reclaim logic, and every other field are
+   * unchanged.
    */
   async getEvaluationForStudent(sessionId: string, submissionId: string, studentId: string) {
     const submission = await this.prisma.exerciseSubmission.findUnique({
@@ -241,7 +252,8 @@ export class EvaluationService {
     if (!submission.evaluation) {
       throw new NotFoundException('Evaluation not found for this submission.');
     }
-    return submission.evaluation;
+    const { status, overallScore, criteriaResults, strengths, improvements, feedback } = submission.evaluation;
+    return { status, overallScore, criteriaResults, strengths, improvements, feedback };
   }
 
   /**

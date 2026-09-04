@@ -11,16 +11,18 @@ import { LoadTestMockEvaluatorService } from './evaluators/load-test-mock-evalua
 import { EXERCISE_EVALUATOR } from './evaluator.interface';
 
 // ---------------------------------------------------------------------------
-// SLICE 8 LOAD TEST — TEMPORARY BINDING.
-// EXERCISE_EVALUATOR is pointed at LoadTestMockEvaluatorService instead of
-// HuggingFaceEvaluatorService for the duration of this slice's controlled
-// load testing (see that file's doc comment, and evaluation.module.ts's own
-// pre-existing comment documenting the identical pattern used by the AI
-// Evaluation Reliability slice). MUST be reverted back to
-// HuggingFaceEvaluatorService before this slice's real-Hugging-Face smoke
-// test and before this slice is considered done.
+// DAY 2 — REAL EVALUATION: reverted per Slice 8's own instruction ("MUST be
+// reverted back to HuggingFaceEvaluatorService before this slice's
+// real-Hugging-Face smoke test and before this slice is considered done").
+// The normal application evaluation path now uses the real Hugging Face
+// evaluator. LoadTestMockEvaluatorService stays registered below (unused by
+// the live binding, same as FakeEvaluatorService/RealAiEvaluatorService) —
+// only for a future *deliberate*, isolated load test to flip this constant
+// back temporarily, never for normal operation. There is no env-var toggle
+// left in the deployed path: production always resolves to the real
+// provider unless a developer edits this literal and redeploys.
 // ---------------------------------------------------------------------------
-const USE_LOAD_TEST_MOCK_EVALUATOR = true;
+const USE_LOAD_TEST_MOCK_EVALUATOR = false;
 
 /**
  * AI Exercise Evaluation Slice 2.1 proved the evaluation lifecycle/API

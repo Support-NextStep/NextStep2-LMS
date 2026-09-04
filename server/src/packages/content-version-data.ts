@@ -42,22 +42,42 @@ type CheckpointOut = {
   required: boolean;
 };
 
+/**
+ * Day 5 follow-up (Issue 2): the authoring StringListEditor for a
+ * checkpoint's options can leave trailing empty/whitespace-only slots
+ * (its own default is two empty strings, and "+ Add option" adds another
+ * empty one each click) — persisting those verbatim is what let
+ * VideoCheckpointPlayer.tsx render blank, clickable answer buttons to
+ * students. Blanks are dropped here, at the one point a draft freezes into
+ * an immutable ContentVersion, so no submitted checkpoint's `options` array
+ * ever contains one — `correctIndex` is remapped to the surviving option's
+ * new position (falling back to 0 if the author's chosen correct option was
+ * itself blank, which the authoring UI's own "Correct Answer" dropdown
+ * already discourages by listing options, not indices).
+ */
 function buildCheckpoints(draft: Record<string, unknown>): CheckpointOut[] {
   if (draft.checkpointsIncluded !== true) return [];
   const raw = Array.isArray(draft.checkpoints) ? draft.checkpoints : [];
   return raw
     .map((c) => asRecord(c))
-    .map(
-      (c): CheckpointOut => ({
+    .map((c): CheckpointOut => {
+      const rawOptions = asStringArray(c.options);
+      const rawCorrectIndex = typeof c.correctIndex === 'number' ? c.correctIndex : 0;
+      const correctOptionText = rawOptions[rawCorrectIndex];
+
+      const options = rawOptions.filter((o) => o.trim().length > 0);
+      const remappedCorrectIndex = correctOptionText?.trim() ? options.indexOf(correctOptionText) : -1;
+
+      return {
         id: asString(c.id),
         timestampSeconds: typeof c.timestampSeconds === 'number' ? c.timestampSeconds : 0,
         question: asString(c.question),
-        options: asStringArray(c.options),
-        correctIndex: typeof c.correctIndex === 'number' ? c.correctIndex : 0,
+        options,
+        correctIndex: remappedCorrectIndex >= 0 ? remappedCorrectIndex : 0,
         feedback: asString(c.feedback),
         required: c.required === true,
-      })
-    )
+      };
+    })
     .sort((a, b) => a.timestampSeconds - b.timestampSeconds);
 }
 
@@ -93,6 +113,12 @@ export function buildContentVersionCreateData(
   return {
     sessionId,
     packageId,
+    // Day 5 follow-up (Issue 1): captured here (mandatory before Submit for
+    // Review, per draft-completeness.ts) so ReviewService.publish() has a
+    // real, immutable, version-pinned value to propagate to Session.title/
+    // description — see that method's own doc comment.
+    sessionTitle: asString(draft.sessionTitle),
+    sessionDescription: asString(draft.sessionDescription),
     objective: asString(learning.objective),
     explanation: asString(learning.explanation),
     concepts: asStringArray(learning.conceptTags),

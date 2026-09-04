@@ -7,5 +7,6 @@ import { ContentService } from './content.service';
   imports: [AuthModule], // for JwtAuthGuard's injected JwtService, used by the now-guarded POST routes
   controllers: [ContentController],
   providers: [ContentService],
+  exports: [ContentService], // AI Tutor (Day 3) reuses getPublishedContentForSession/getSessionWithBreadcrumb rather than re-querying Prisma directly
 })
 export class ContentModule {}

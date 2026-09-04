@@ -9,6 +9,8 @@ import { SubmissionsModule } from './submissions/submissions.module';
 import { EvaluationModule } from './evaluation/evaluation.module';
 import { ProgressModule } from './progress/progress.module';
 import { ActivityProgressModule } from './activity-progress/activity-progress.module';
+import { AiTutorModule } from './ai-tutor/ai-tutor.module';
+import { AdminModule } from './admin/admin.module';
 
 /**
  * Modular monolith per NEXTSTEP2_BACKEND_ARCHITECTURE_AND_TECHNOLOGY_SELECTION.md
@@ -25,7 +27,10 @@ import { ActivityProgressModule } from './activity-progress/activity-progress.mo
  * frontend's previous localStorage-only completedSessionIds. ActivityProgress
  * (Slice 3) extends that to Learning/Video Check/Practice — the three
  * required activities besides Exercise that previously had no backend trace
- * at all — and ProgressModule's completeSession now checks it too.
+ * at all — and ProgressModule's completeSession now checks it too. AiTutor
+ * (Day 3) adds the first real, authenticated AI Need Help/Tutor endpoint —
+ * a live request/response call to the same Hugging Face provider Evaluation
+ * uses, but logically separate: no queue, no persistence, no retries.
  */
 @Module({
   imports: [
@@ -39,6 +44,8 @@ import { ActivityProgressModule } from './activity-progress/activity-progress.mo
     EvaluationModule,
     ProgressModule,
     ActivityProgressModule,
+    AiTutorModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

@@ -96,6 +96,17 @@ export class ReviewService {
    * publish attempts ever race), and records the PUBLISHED ContentReview
    * row as the audit-trail companion to the new Publication, in the same
    * transaction.
+   *
+   * Day 5 follow-up (Issue 1): this is also the one point that propagates
+   * the author-edited Session Title/Description to the real Session catalog
+   * row — never on every draft save/keystroke, and never anywhere else.
+   * Publish is the correct moment because it's the only step that already
+   * means "this version is now the one true thing students see" — the same
+   * moment Publication itself flips over. ContentVersion.sessionTitle/
+   * sessionDescription (captured once, immutably, at submit time — see
+   * content-version-data.ts) is the single source of truth being propagated
+   * FROM; ContentPackage.draftContent is never read here, so an author's
+   * still-in-progress next draft can never leak into what gets published.
    */
   async publish(packageId: string, reviewerId: string) {
     const pkg = await this.prisma.contentPackage.findUnique({ where: { id: packageId } });
@@ -108,6 +119,11 @@ export class ReviewService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      const version = await tx.contentVersion.findUniqueOrThrow({
+        where: { id: pkg.currentContentVersionId as string },
+        select: { sessionTitle: true, sessionDescription: true },
+      });
+
       await tx.publication.updateMany({
         where: { sessionId: pkg.sessionId, supersededAt: null },
         data: { supersededAt: new Date() },
@@ -122,6 +138,18 @@ export class ReviewService {
       });
 
       await tx.contentPackage.update({ where: { id: pkg.id }, data: { status: PackageStatus.PUBLISHED } });
+
+      // Both fields are mandatory before Submit for Review (draft-completeness.ts),
+      // so a real submitted version never has an empty one — this guard only
+      // protects a pre-existing ContentVersion row from before this column
+      // existed (backfilled to '' by its migration) from ever blanking out a
+      // real, already-correct Session title/description.
+      if (version.sessionTitle.trim() && version.sessionDescription.trim()) {
+        await tx.session.update({
+          where: { id: pkg.sessionId },
+          data: { title: version.sessionTitle, description: version.sessionDescription },
+        });
+      }
 
       await tx.contentReview.create({
         data: {

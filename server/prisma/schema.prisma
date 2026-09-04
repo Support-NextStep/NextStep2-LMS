@@ -266,6 +266,20 @@ model ContentVersion {
   packageId String         @map("package_id")
   package   ContentPackage @relation("PackageVersions", fields: [packageId], references: [id])
 
+  /// Day 5 follow-up: the author-edited title/description from the Session
+  /// Information panel were previously captured into ContentPackage.draftContent
+  /// and then silently dropped at submit time — never reaching ContentVersion,
+  /// so ReviewService.publish() had nothing authoritative to propagate to
+  /// Session.title/description, and the catalog Session row (set once at
+  /// session creation) stayed the only source students ever saw, no matter
+  /// what an author typed here. Adding these as real columns (mirroring
+  /// objective/explanation/etc. below) is what lets publish() propagate them
+  /// — see ReviewService.publish(). Both are mandatory before Submit for
+  /// Review (draft-completeness.ts), so no real submitted version has an
+  /// empty one; the default only backfills pre-existing rows from before
+  /// this column existed.
+  sessionTitle       String   @default("") @map("session_title")
+  sessionDescription String   @default("") @map("session_description")
   objective          String
   /// Missing from the Phase 0 schema entirely — SessionContent.explanation
   /// is a real, rendered student-facing field (SessionWorkspace.tsx) that

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell, { type AppShellNavItem } from "./AppShell";
-import { IconCourse, IconDashboard, IconPerformance, IconPortfolio } from "./navIcons";
+import { IconCourse, IconDashboard, IconPerformance } from "./navIcons";
 import { logoutRequest } from "../data/auth";
 import { useCourseData } from "../data/progress";
 

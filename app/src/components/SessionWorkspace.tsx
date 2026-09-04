@@ -114,6 +114,15 @@ export type SessionWorkspaceProps = {
    * safely be a stub.
    */
   onFetchEvaluation: (submissionId: string) => Promise<EvaluationDetail>;
+  /**
+   * AI Need Help / AI Tutor (Day 3) — one question/help-action -> one real
+   * AI answer, via the real authenticated backend endpoint (see
+   * SessionPage.tsx's handleAskAiTutor). Takes only the student's message;
+   * the backend derives identity from the JWT and lesson context from the
+   * session's own currently-published content — nothing else is sent. See
+   * sendChat() below for loading/error handling around this call.
+   */
+  onAskAiTutor: (message: string) => Promise<{ answer: string }>;
   backHref: string;
   backLabel: string;
   getNextSessionHref: (nextSessionId: string) => string;
@@ -474,6 +483,7 @@ export default function SessionWorkspace({
   onCompleteActivity,
   onSubmitExercise,
   onFetchEvaluation,
+  onAskAiTutor,
   backHref,
   backLabel,
   getNextSessionHref,
@@ -505,6 +515,11 @@ export default function SessionWorkspace({
     { id: 0, role: "ai", text: "Hi! I'm your AI Learning Assistant. Ask me anything about this session." },
   ]);
   const [chatInput, setChatInput] = useState("");
+  // AI Need Help / AI Tutor (Day 3) — true while a real request to the
+  // backend is in flight, for the "Thinking…" indicator and to prevent a
+  // second question/help-action from being sent (and racing the first) while
+  // one is still pending — this UI only ever expects one answer at a time.
+  const [chatSending, setChatSending] = useState(false);
 
   // Practice is guided experimentation, not evaluation — "completed" just
   // means the student opened Practice at least once, never a Self-Check
@@ -705,16 +720,36 @@ export default function SessionWorkspace({
     if (workspaceView === "practice") setPracticeViewed(true);
   }, [workspaceView]);
 
-  function sendChat(text: string) {
+  /**
+   * AI Need Help / AI Tutor (Day 3) — used by both the suggested-prompt
+   * buttons and the free-form ask form, exactly as it was when this sent a
+   * canned reply; only the reply source changed. `chatSending` blocks a
+   * second call while one is in flight (see its own doc comment above) —
+   * every caller already only fires this from a click/submit, so this guard
+   * is the only duplicate-submission protection needed.
+   */
+  async function sendChat(text: string) {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed || chatSending) return;
     const userId = Date.now();
     setChat((c) => [...c, { id: userId, role: "user", text: trimmed }]);
     setChatInput("");
-    const reply = `I am a future AI Tutor. Real conversational responses are not yet integrated, but I've received your message: "${trimmed}"`;
-    setTimeout(() => {
-      setChat((c) => [...c, { id: userId + 1, role: "ai", text: reply }]);
-    }, 500);
+    setChatSending(true);
+    try {
+      const { answer } = await onAskAiTutor(trimmed);
+      setChat((c) => [...c, { id: userId + 1, role: "ai", text: answer }]);
+    } catch (err) {
+      // Same safe-error convention as exerciseSubmitError elsewhere in this
+      // component — the backend's own message is already student-safe (see
+      // AiTutorService: timeouts/provider errors/empty responses all map to
+      // a generic "AI Tutor is temporarily unavailable" family of messages,
+      // never a raw provider error or stack trace), so it's shown as-is
+      // rather than replaced with a second, more-generic string.
+      const message = err instanceof ApiError ? err.message : "Couldn't reach the AI Tutor. Please try again.";
+      setChat((c) => [...c, { id: userId + 1, role: "ai", text: message }]);
+    } finally {
+      setChatSending(false);
+    }
   }
 
   function reviewSession() {
@@ -1480,7 +1515,8 @@ export default function SessionWorkspace({
                     key={prompt}
                     type="button"
                     onClick={() => sendChat(prompt)}
-                    className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium text-navy-500/70 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-600"
+                    disabled={chatSending}
+                    className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium text-navy-500/70 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {prompt}
                   </button>
@@ -1498,6 +1534,12 @@ export default function SessionWorkspace({
                     {m.text}
                   </div>
                 ))}
+                {chatSending && (
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-navy-500/50">
+                    <Spinner className="h-3.5 w-3.5" />
+                    Thinking&hellip;
+                  </div>
+                )}
               </div>
 
               <form
@@ -1513,9 +1555,10 @@ export default function SessionWorkspace({
                   onChange={(e) => setChatInput(e.target.value)}
                   placeholder="Ask something..."
                   aria-label="Ask something about this session"
-                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-navy-500 placeholder:text-navy-500/35 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15"
+                  disabled={chatSending}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-navy-500 placeholder:text-navy-500/35 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15 disabled:opacity-50"
                 />
-                <Button type="submit" className="shrink-0 basis-auto !w-auto px-4">
+                <Button type="submit" loading={chatSending} disabled={chatSending} className="shrink-0 basis-auto !w-auto px-4">
                   Ask
                 </Button>
               </form>

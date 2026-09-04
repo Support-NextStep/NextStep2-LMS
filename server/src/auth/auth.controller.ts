@@ -1,10 +1,12 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Throttle } from '@nestjs/throttler';
 import type { CookieOptions, Request, Response } from 'express';
 import { AuthService, toPublicUser, type IssuedTokens } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { AuthThrottlerGuard } from '../common/guards/auth-throttler.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from './types/jwt-payload';
 
@@ -45,6 +47,8 @@ export class AuthController {
   }
 
   @Post('register')
+  @UseGuards(AuthThrottlerGuard)
+  @Throttle({ auth: { limit: 10, ttl: 15 * 60 * 1000 } })
   async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) res: Response) {
     const user = await this.authService.register(dto.email, dto.password, dto.name);
     const tokens = await this.authService.issueTokens(user);
@@ -54,6 +58,14 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthThrottlerGuard)
+  // A higher, per-minute limit than register: the same handful of seed
+  // accounts (author@/reviewer@/admin@) are legitimately re-logged-into
+  // very often (role-switching tests, session-refresh checks, this repo's
+  // own Playwright suites) — 50/minute per (IP, email) still makes rapid
+  // automated brute-forcing of one password impractically slow (under one
+  // guess/second against an argon2id hash) while never touching real usage.
+  @Throttle({ auth: { limit: 50, ttl: 60 * 1000 } })
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     const user = await this.authService.validateCredentials(dto.email, dto.password);
     const tokens = await this.authService.issueTokens(user);

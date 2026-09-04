@@ -1,9 +1,11 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { AuthThrottlerGuard } from '../common/guards/auth-throttler.guard';
 
 /**
  * Global for the same reason PrismaModule is (see its own doc comment):
@@ -37,12 +39,19 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
         return { secret };
       },
     }),
+    // Day 8 security hardening — see AuthThrottlerGuard's own doc comment
+    // for why tracking is (IP + email), not IP alone. This module-level
+    // default (10 per 15 minutes) applies to /auth/register; /auth/login's
+    // own @Throttle override on the controller is more generous (50/minute)
+    // since a handful of real seed accounts are legitimately re-logged-into
+    // very often — see that decorator's own comment.
+    ThrottlerModule.forRoot([{ name: 'auth', ttl: 15 * 60 * 1000, limit: 10 }]),
   ],
   controllers: [AuthController],
   // JwtAuthGuard is provided here (not just instantiated ad hoc) so other
   // modules can @UseGuards(JwtAuthGuard) via Nest's DI and get the same
   // configured JwtService injected into it.
-  providers: [AuthService, JwtAuthGuard],
+  providers: [AuthService, JwtAuthGuard, AuthThrottlerGuard],
   exports: [AuthService, JwtAuthGuard, JwtModule],
 })
 export class AuthModule {}

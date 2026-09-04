@@ -139,11 +139,17 @@ function LearningContentPanel({
           <Field label="Learning Objective" hint="What students should be able to do by the end of this session.">
             <textarea rows={2} className={inputClass} value={draft.learning.objective} onChange={(e) => onChange({ learning: { ...draft.learning, objective: e.target.value } })} />
           </Field>
+          <Field label="Explanation" hint="Optional — the fuller walkthrough shown below the objective on the student page.">
+            <textarea rows={4} className={inputClass} value={draft.learning.explanation} onChange={(e) => onChange({ learning: { ...draft.learning, explanation: e.target.value } })} />
+          </Field>
           <Field label="Examples">
             <StringListEditor items={draft.learning.examples} onChange={(examples) => onChange({ learning: { ...draft.learning, examples } })} placeholder="Example" addLabel="+ Add example" />
           </Field>
           <Field label="Key Concepts">
             <StringListEditor items={draft.learning.keyConcepts} onChange={(keyConcepts) => onChange({ learning: { ...draft.learning, keyConcepts } })} placeholder="Key Concept" addLabel="+ Add concept" />
+          </Field>
+          <Field label="Concept Tags" hint="Optional — short topic tags (e.g. form, validation), shown to students inside Need Help.">
+            <StringListEditor items={draft.learning.conceptTags} onChange={(conceptTags) => onChange({ learning: { ...draft.learning, conceptTags } })} placeholder="Tag" addLabel="+ Add tag" />
           </Field>
         </div>
       </HybridUploadPanel>

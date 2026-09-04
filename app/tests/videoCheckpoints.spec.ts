@@ -2,12 +2,15 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   loginAsContentAuthor,
   loginAsContentReviewer,
+  loginAsDisposableStudent,
   openAuthoringWorkspace,
   fillMandatorySections,
   goToAuthoringSection,
   submitForReview,
   approveAsReviewer,
   publishAsReviewer,
+  getPackageStatus,
+  getPublishedSessionContent,
   REAL_COURSE_ID,
   REAL_SUBJECT_ID,
   REAL_SESSION_ID,
@@ -39,27 +42,7 @@ type StoredCheckpoint = {
 type StoredSessionContent = {
   video?: { youtubeUrl: string; title: string };
   checkpoints?: StoredCheckpoint[];
-  videoCheckpoint?: { question: string; options: string[]; correctIndex: number };
 };
-
-type StoredPackageRecord = {
-  id: string;
-  status: string;
-  courses?: { subjects: { sessions: { content: StoredSessionContent | null }[] }[] }[];
-};
-
-async function readPackageRecord(page: Page, packageId: string): Promise<StoredPackageRecord | null> {
-  return page.evaluate((id) => {
-    const raw = window.localStorage.getItem("nextstep2:contentPackages");
-    if (!raw) return null;
-    const all = JSON.parse(raw) as StoredPackageRecord[];
-    return all.find((p) => p.id === id) ?? null;
-  }, packageId);
-}
-
-function sessionContentOf(pkg: StoredPackageRecord | null): StoredSessionContent | null {
-  return pkg?.courses?.[0]?.subjects?.[0]?.sessions?.[0]?.content ?? null;
-}
 
 /** Scopes field lookups to one specific "Checkpoint #N" card, since every card repeats the same field labels (Timestamp/Question/Options/.../Required). */
 function checkpointBlock(page: Page, n: number) {
@@ -159,9 +142,8 @@ test.describe("Video Checkpoints: multiple checkpoints survive the full pipeline
     await approveAsReviewer(page);
     await publishAsReviewer(page);
 
-    const record = await readPackageRecord(page, packageId);
-    expect(record?.status).toBe("published");
-    const content = sessionContentOf(record);
+    await expect.poll(() => getPackageStatus(page, packageId)).toBe("PUBLISHED");
+    const content = (await getPublishedSessionContent(page, REAL_SESSION_ID)) as StoredSessionContent | null;
 
     // ---- Video survives, complete ----
     expect(content?.video).toEqual({ youtubeUrl: "https://youtu.be/dQw4w9WgXcQ", title: "Async / Await Explained" });
@@ -209,82 +191,35 @@ test.describe("Video Checkpoints: multiple checkpoints survive the full pipeline
   });
 });
 
-test.describe("Video Checkpoints: legacy data compatibility", () => {
-  test("a pre-Slice-1 record with only the deprecated singular videoCheckpoint (no checkpoints[]) still renders for the Student via the compatibility adapter", async ({ page }) => {
-    await page.goto("/login"); // establish the app origin before touching localStorage
-
-    // A real curated session id is required here too (see the note in the
-    // "multiple checkpoints survive" test above) — SessionPage.tsx only
-    // resolves sessions mock.ts's curated curriculum already knows about.
-    const legacySessionId = REAL_SESSION_ID;
-    const record = {
-      id: "pkg-legacy-checkpoint",
-      fileName: "Legacy Video Session",
-      importedAt: new Date().toISOString(),
-      importedBy: "qa@example.com",
-      status: "published",
-      courseCount: 1,
-      subjectCount: 1,
-      sessionCount: 1,
-      validation: { valid: true, errors: [], warnings: [] },
-      review: { checklist: {}, notes: "", publishedAt: new Date().toISOString() },
-      courses: [
-        {
-          id: REAL_COURSE_ID,
-          title: "QA Course",
-          description: "QA",
-          subjects: [
-            {
-              id: REAL_SUBJECT_ID,
-              courseId: REAL_COURSE_ID,
-              title: "QA Subject",
-              description: "QA",
-              order: 1,
-              sessions: [
-                {
-                  id: legacySessionId,
-                  subjectId: REAL_SUBJECT_ID,
-                  title: "Legacy Checkpoint Session",
-                  description: "QA",
-                  order: 1,
-                  content: {
-                    objective: "LEGACYCHECKPOINTMARKER objective text.",
-                    concepts: [],
-                    keyConcepts: [],
-                    examples: [],
-                    // Deliberately the OLD shape only — no `checkpoints`, no `video` —
-                    // exactly what a package saved before this slice looks like.
-                    videoCheckpoint: { question: "Legacy question — still readable?", options: ["No", "Yes"], correctIndex: 1 },
-                    practice: { task: "task", language: "javascript" },
-                    aiHelp: { quickPrompts: [], replies: {}, defaultReply: "reply" },
-                    exercise: { objective: "obj", requirements: [], language: "javascript" },
-                    requiredActivities: ["learning", "videoCheck", "practice", "exercise"],
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    };
-
-    await page.evaluate((rec) => {
-      window.localStorage.setItem("nextstep2:contentPackages", JSON.stringify([rec]));
-    }, record);
-
-    await page.goto(`/session/${legacySessionId}`);
-
-    // Renders without crashing, with the real objective text.
-    await expect(page.getByText("LEGACYCHECKPOINTMARKER", { exact: false })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Practice", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Exercise", exact: true })).toBeVisible();
-
-    // The legacy checkpoint's question really is reachable through the adapter —
-    // play the (mock) video and confirm it surfaces.
-    await page.getByRole("button", { name: "Play session video" }).click();
-    await expect(page.getByText("Legacy question — still readable?")).toBeVisible();
-  });
-});
+// ---------------------------------------------------------------------------
+// RETIRED (Day 5 follow-up): "a pre-Slice-1 record with only the deprecated
+// singular videoCheckpoint (no checkpoints[]) still renders for the Student
+// via the compatibility adapter."
+//
+// This test injected a legacy ContentPackageRecord shape directly into
+// `localStorage["nextstep2:contentPackages"]` and then opened the real
+// Student route (/session/:id) to prove a "legacy localStorage record ->
+// Student session page" compatibility path. That path no longer exists:
+// SessionPage.tsx's real content resolution (getSessionContent() in
+// sessionContent.ts) states this explicitly in its own current doc comment —
+// "the real backend's canonical published-content resolution... is now the
+// only published-content source... there is no longer a separate
+// local-published-content layer to fall back to here." The precedence today
+// is real-backend-published -> curated demo entry -> generated fallback;
+// none of those three ever reads `nextstep2:contentPackages`, so a student
+// can no longer reach ANY localStorage-authored content, legacy-shaped or
+// otherwise. (The `videoCheckpoint` singular-field normalizer this test
+// exercised still exists in data/contentPackages.ts, but only for the
+// separate Content Author/Reviewer Preview feature — ContentPreviewSession.tsx
+// — which previews a package still in its own local draft/review context,
+// never for a real student on the real /session/:id route this test used.)
+//
+// Retired rather than rewritten: there is no current supported behavior to
+// verify a student-facing legacy-localStorage compatibility adapter against,
+// because the product no longer has one for students. If Preview's own
+// legacy-shape handling ever needs coverage, that would be a new test
+// against /content/preview or /review/preview, not a revival of this one.
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Slice 2 — the real YouTube Player + sequential checkpoint playback. See
@@ -375,6 +310,15 @@ test.describe("Video Checkpoints: real YouTube player + sequential playback (Sli
     });
     await fillMandatorySections(page, { objective: "Slice 2 sequential playback session." });
 
+    // fillMandatorySections()'s DOCX import never sets Starter Code — this
+    // test goes on to actually submit the Exercise as a real student without
+    // touching the OneCompiler editor, which submits content.exercise.starterCode
+    // verbatim (SessionWorkspace.tsx's handleConfirmExerciseSubmit) — an
+    // empty one is correctly rejected client-side ("Submission cannot be
+    // empty."), so author a non-empty one.
+    await goToAuthoringSection(page, "Exercise");
+    await page.getByLabel("Starter Code").fill("async function solve() {\n  return true;\n}\n");
+
     await goToAuthoringSection(page, "Video");
     await page.getByText("This session includes a video", { exact: true }).click();
     await page.getByLabel("YouTube URL").fill("https://youtu.be/dQw4w9WgXcQ");
@@ -418,6 +362,13 @@ test.describe("Video Checkpoints: real YouTube player + sequential playback (Sli
     await approveAsReviewer(page);
     await publishAsReviewer(page);
 
+    // Real auth is one cookie per browser context — this test goes on to
+    // submit the real Exercise and mark real activities/session complete,
+    // all real, JwtAuthGuard + Roles(STUDENT)-gated backend endpoints since
+    // Day 2/the Activity Progress slice. The Content Reviewer session above
+    // cannot call any of those (wrong role) — log in as a real disposable
+    // student before interacting with the session as one.
+    await loginAsDisposableStudent(page);
     await page.goto(`/session/${REAL_SESSION_ID}`);
     const fake = fakePlayer(page);
 

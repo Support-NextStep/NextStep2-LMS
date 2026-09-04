@@ -152,6 +152,21 @@ export default function ContentPreviewSession({ role }: { role: "author" | "revi
     throw new Error("Evaluation fetch is not available in Preview.");
   }
 
+  /**
+   * AI Tutor (Day 3) is a real, authenticated Student-only backend endpoint
+   * (see SessionPage.tsx's handleAskAiTutor) — out of scope to wire up for a
+   * Content Author/Reviewer's Draft Preview today, unlike handleFetchEvaluation
+   * above, "Need Help?" IS reachable here (it renders whenever content.aiHelp
+   * exists, regardless of mode), so this throws a clear, student-safe message
+   * rather than silently faking a reply — SessionWorkspace's sendChat() shows
+   * any thrown error's message as the AI's own chat bubble, so this reads as
+   * an honest "not available here" rather than a crash.
+   */
+  async function handleAskAiTutor(message: string): Promise<never> {
+    void message;
+    throw new Error("The AI Tutor is only available in the real Student session, not in Preview.");
+  }
+
   return renderInLayout(
     <>
       {/* Full-bleed sticky banner: cancels the shell's own top/side padding so it sits flush under the topbar. */}
@@ -183,6 +198,7 @@ export default function ContentPreviewSession({ role }: { role: "author" | "revi
             onCompleteActivity={handleCompleteActivity}
             onSubmitExercise={handleSubmitExercise}
             onFetchEvaluation={handleFetchEvaluation}
+            onAskAiTutor={handleAskAiTutor}
             backHref={backTo}
             backLabel={backLabel}
             getNextSessionHref={(nextId) => `${role === "reviewer" ? "/review/preview" : "/content/preview"}/${packageId}/${courseId}/${subjectId}/${nextId}`}

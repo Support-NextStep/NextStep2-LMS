@@ -1,21 +1,16 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AdminLayout from "../components/AdminLayout";
 import { useRequireAdminAccount } from "../hooks/useRequireAdminAccount";
-import { COURSE, STUDENT } from "../data/mock";
-import { useCourseData } from "../data/progress";
-import { ADMIN_STUDENT_ID, getAllStudentIds } from "../data/adminStudents";
+import { fetchAdminStudents, type AdminStudentSummary } from "../data/adminApi";
+import { ApiError } from "../data/apiClient";
+import { getSubjects, getSubjectDetail } from "../data/mock";
 
-type StudentRow = {
-  id: string;
-  name: string;
-  /** Not tracked anywhere in this prototype — see BACKEND DATA REQUIREMENT in the final report. */
-  email: string | null;
-  courseTitle: string;
-  progressPercent: number;
-  averageScore: number | null;
-  lastActivityAt: string | null;
-};
+/** Total real sessions across the (backend-refreshed) course catalog — used only to turn a real sessionsCompleted count into a percent for the existing ProgressBar, never a per-student figure of its own. */
+function totalRealSessionCount(): number {
+  const subjects = getSubjects(new Set());
+  return subjects.reduce((sum, subject) => sum + getSubjectDetail(subject, new Set()).sessions.length, 0);
+}
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -32,7 +27,8 @@ function ProgressBar({ percent }: { percent: number }) {
   );
 }
 
-function StudentCard({ student }: { student: StudentRow }) {
+function StudentCard({ student, totalSessions }: { student: AdminStudentSummary; totalSessions: number }) {
+  const progressPercent = totalSessions === 0 ? 0 : Math.round((student.sessionsCompleted / totalSessions) * 100);
   return (
     <Link
       to={`/admin/students/${student.id}`}
@@ -40,15 +36,15 @@ function StudentCard({ student }: { student: StudentRow }) {
     >
       <div className="min-w-0">
         <p className="font-semibold text-navy-500">{student.name}</p>
-        <p className="mt-0.5 text-sm text-navy-500/50">{student.email ?? "Email not available"}</p>
-        <p className="mt-1 text-xs text-navy-500/45">{student.courseTitle}</p>
+        <p className="mt-0.5 text-sm text-navy-500/50">{student.email}</p>
+        <p className="mt-1 text-xs text-navy-500/45">Joined {formatDate(student.createdAt)}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 sm:shrink-0">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-navy-500/40">Progress</p>
           <div className="mt-1">
-            <ProgressBar percent={student.progressPercent} />
+            <ProgressBar percent={progressPercent} />
           </div>
         </div>
         <div>
@@ -70,40 +66,35 @@ function StudentCard({ student }: { student: StudentRow }) {
 
 export default function AdminStudents() {
   const { account, checked } = useRequireAdminAccount();
-  const { courseProgress, performanceRecords, getCoursePerformance } = useCourseData();
+  const [students, setStudents] = useState<AdminStudentSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
-  const allStudents: StudentRow[] = useMemo(() => {
-    // This prototype tracks exactly one implicit student per browser — see
-    // adminStudents.ts. Every id it returns maps to the same real data
-    // (progress.tsx / performance.ts), since there's no per-student storage
-    // scoping yet.
-    return getAllStudentIds().map((id) => {
-      const lastActivityAt =
-        performanceRecords.length > 0
-          ? performanceRecords.reduce((latest, r) => (r.completedAt > latest ? r.completedAt : latest), performanceRecords[0].completedAt)
-          : null;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const real = await fetchAdminStudents();
+        if (!cancelled) setStudents(real);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof ApiError ? err.message : "Could not load students.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-      return {
-        id,
-        name: id === ADMIN_STUDENT_ID ? STUDENT.name : id,
-        email: null,
-        courseTitle: COURSE.title,
-        progressPercent: courseProgress.courseProgressPercent,
-        averageScore: getCoursePerformance().averageScore,
-        lastActivityAt,
-      };
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseProgress, performanceRecords]);
+  const filtered = useMemo(() => {
+    if (!students) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return students;
+    return students.filter((s) => s.name.toLowerCase().includes(q) || s.email.toLowerCase().includes(q));
+  }, [students, query]);
+
+  const totalSessions = useMemo(() => totalRealSessionCount(), []);
 
   if (!checked || !account) return null;
-
-  const filtered = allStudents.filter((s) => {
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return s.name.toLowerCase().includes(q) || (s.email ?? "").toLowerCase().includes(q);
-  });
 
   return (
     <AdminLayout adminName={account.name}>
@@ -123,7 +114,16 @@ export default function AdminStudents() {
         </div>
 
         <div className="mt-6">
-          {filtered.length === 0 ? (
+          {error ? (
+            <div className="rounded-xl border border-error/20 bg-error/5 px-6 py-12 text-center">
+              <p className="font-medium text-error">Could not load students.</p>
+              <p className="mt-1.5 text-sm text-navy-500/60">{error}</p>
+            </div>
+          ) : students === null ? (
+            <div className="rounded-xl border border-slate-200 bg-white px-6 py-12 text-center">
+              <p className="text-sm text-navy-500/50">Loading students&hellip;</p>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="rounded-xl border border-slate-200 bg-white px-6 py-12 text-center">
               <p className="font-medium text-navy-500">No students found.</p>
               <p className="mt-1.5 text-sm text-navy-500/60">Try a different name or email.</p>
@@ -131,7 +131,7 @@ export default function AdminStudents() {
           ) : (
             <div className="flex flex-col gap-3">
               {filtered.map((student) => (
-                <StudentCard key={student.id} student={student} />
+                <StudentCard key={student.id} student={student} totalSessions={totalSessions} />
               ))}
             </div>
           )}

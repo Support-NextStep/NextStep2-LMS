@@ -131,16 +131,23 @@ export default function VideoCheckpointPlayer({ video, checkpoints, onEnded, onA
           {!answered ? (
             <>
               <div className="flex flex-col gap-2">
-                {activeCheckpoint.options.map((option, i) => (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => selectAnswer(i)}
-                    className="rounded-lg border border-white/20 bg-white/5 px-3.5 py-2 text-left text-sm font-medium text-white transition-colors hover:bg-white/15"
-                  >
-                    {option}
-                  </button>
-                ))}
+                {/* An empty/whitespace-only option (e.g. a StringListEditor
+                    slot the author never filled in) is never rendered as a
+                    selectable answer — see the "answered" block below for
+                    why the index itself (not a post-filter position) is
+                    still what gets passed to selectAnswer/correctIndex. */}
+                {activeCheckpoint.options.map((option, i) =>
+                  option.trim() ? (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => selectAnswer(i)}
+                      className="rounded-lg border border-white/20 bg-white/5 px-3.5 py-2 text-left text-sm font-medium text-white transition-colors hover:bg-white/15"
+                    >
+                      {option}
+                    </button>
+                  ) : null
+                )}
               </div>
               {!activeCheckpoint.required && (
                 <button
@@ -160,11 +167,12 @@ export default function VideoCheckpointPlayer({ video, checkpoints, onEnded, onA
                   right one, not just that they missed it. */}
               <div className="flex flex-col gap-2">
                 {activeCheckpoint.options.map((option, i) => {
+                  if (!option.trim()) return null;
                   const isCorrectOption = i === activeCheckpoint.correctIndex;
                   const isWrongSelection = i === activeCheckpointSelectedIndex && !isCorrectOption;
                   return (
                     <div
-                      key={option}
+                      key={i}
                       className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-left text-sm font-medium ${
                         isCorrectOption
                           ? "border-success bg-success/15 text-white"

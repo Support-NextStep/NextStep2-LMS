@@ -65,13 +65,12 @@ export type CriterionResult = {
 };
 
 /**
- * Only the fields the Student Evaluation UI actually renders — the backend
- * response also includes providerName/retryCount/nextAttemptAt/attemptedAt/
- * evaluatedAt (operational bookkeeping), which are simply not declared here
- * rather than surfaced to a student-facing screen. `failureReason` IS
- * fetched but deliberately never rendered verbatim in the UI (see
- * SessionWorkspace.tsx) — it's internal/operator text, not something to
- * show a student directly.
+ * Only the fields the Student Evaluation UI actually renders. As of Day 2,
+ * the backend itself (EvaluationService.getEvaluationForStudent) also only
+ * ever returns exactly this shape — providerName/retryCount/nextAttemptAt/
+ * attemptedAt/evaluatedAt/failureReason (operational bookkeeping and
+ * internal/operator-only text) never leave the server at all any more, not
+ * just "declared out" of this type.
  */
 export type EvaluationDetail = {
   status: EvaluationStatus;
@@ -80,7 +79,6 @@ export type EvaluationDetail = {
   strengths: string[];
   improvements: string[];
   feedback: string | null;
-  failureReason: string | null;
 };
 
 export async function submitExercise(sessionId: string, files: CodeFile[]): Promise<SubmissionSummary> {

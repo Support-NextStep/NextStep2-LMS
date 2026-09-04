@@ -115,7 +115,30 @@ const COMPONENTS_AND_STATE_CONTENT = {
   delivery: null as unknown,
 };
 
+/**
+ * Day 8 security hardening: this script's whole point is dev/bootstrap
+ * convenience — a known password for four accounts that otherwise have no
+ * other way to exist (see the file header). That is only ever safe in a
+ * non-production environment. Refuse to seed a literal, guessable default
+ * password into a database that NODE_ENV says is production — an operator
+ * who genuinely needs these accounts in production must set the
+ * corresponding SEED_*_PASSWORD env var explicitly, which this check then
+ * allows through unchanged.
+ */
+function assertNoDefaultPasswordsInProduction() {
+  if (process.env.NODE_ENV !== 'production') return;
+  const requiredOverrides = ['SEED_ADMIN_PASSWORD', 'SEED_CONTENT_AUTHOR_PASSWORD', 'SEED_CONTENT_REVIEWER_PASSWORD', 'SEED_STUDENT_PASSWORD'];
+  const missing = requiredOverrides.filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Refusing to seed default/guessable passwords in production (NODE_ENV=production). ` +
+        `Set these env vars explicitly first: ${missing.join(', ')}.`
+    );
+  }
+}
+
 async function main() {
+  assertNoDefaultPasswordsInProduction();
   console.log('Seeding accounts...');
   const admin = await upsertUser(
     process.env.SEED_ADMIN_EMAIL ?? 'admin@nextstep2.dev',
